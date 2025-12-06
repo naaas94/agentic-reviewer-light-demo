@@ -85,7 +85,6 @@ class SyntheticGenerator:
         ("Objection", "Erasure"),            # Both about stopping data use
         ("Rectification", "General Inquiry"), # Both about data accuracy
         ("Complaint", "Objection"),          # Both express dissatisfaction
-        ("Portability", "Erasure"),          # Both about removing data from service
     ]
     
     # Semantic similarity scores for dynamic confusion (0-1, higher = more confusable)
