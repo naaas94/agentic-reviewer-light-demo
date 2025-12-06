@@ -201,7 +201,7 @@ This is a **minimal demo** for quick validation. For the full production impleme
 - 📊 System monitoring & health checks
 - 📝 SQLite audit logging
 
-See: **[agentic-reviewer](https://github.com/YOUR_USERNAME/agentic-reviewer)**
+See: **[agentic-reviewer](https://github.com/naaas94/agentic-reviewer)**
 
 ---
 
