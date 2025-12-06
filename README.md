@@ -1,5 +1,7 @@
 # Agentic Reviewer Demo
 
+[![CI](https://github.com/YOUR_USERNAME/agentic-reviewer-demo/actions/workflows/ci.yml/badge.svg)](https://github.com/YOUR_USERNAME/agentic-reviewer-demo/actions/workflows/ci.yml)
+
 **LLM-powered semantic auditing — no API keys, runs locally, free.**
 
 ```
@@ -145,13 +147,47 @@ agentic-reviewer-demo/
 ├── run_demo.py              # Single entry point
 ├── requirements.txt         # Minimal dependencies
 ├── core/
-│   ├── synthetic_generator.py
-│   ├── review_engine.py
-│   └── report_generator.py
+│   ├── synthetic_generator.py  # Data generation with configurable confusion
+│   ├── review_engine.py        # LLM review with caching & parallelism
+│   └── report_generator.py     # Markdown report generation
 ├── configs/
 │   └── labels.yaml          # GDPR/CCPA label definitions
+├── tests/                   # Pytest test suite
+│   ├── test_synthetic_generator.py
+│   ├── test_review_engine.py
+│   └── test_report_generator.py
+├── .github/workflows/       # CI configuration
+│   └── ci.yml
 └── outputs/                 # Generated runs
 ```
+
+---
+
+## Testing
+
+Run the test suite:
+
+```bash
+# Install test dependencies
+pip install pytest pytest-cov pytest-asyncio
+
+# Run all tests
+pytest tests/ -v
+
+# Run with coverage
+pytest tests/ -v --cov=core --cov-report=term-missing
+```
+
+---
+
+## Architecture Highlights
+
+| Feature | Implementation |
+|---------|---------------|
+| **Prompt Caching** | MD5 hash-based cache avoids redundant LLM calls |
+| **Parallel Execution** | `asyncio.gather()` + semaphore for concurrent reviews |
+| **Retry with Backoff** | Exponential backoff for Ollama resilience |
+| **Configurable Confusion** | Static patterns or dynamic semantic similarity |
 
 ---
 

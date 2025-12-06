@@ -1,6 +1,11 @@
 """
 Simplified LLM review engine for demo.
 Evaluates predictions and suggests corrections using Ollama.
+
+Features:
+- Prompt caching to avoid redundant LLM calls
+- Parallel async execution with semaphore-based concurrency control
+- Retry with exponential backoff for robustness
 """
 
 import aiohttp
@@ -8,21 +13,39 @@ import asyncio
 import hashlib
 import time
 import yaml
+import random
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 
 
 class ReviewEngine:
-    """Minimal LLM-powered review engine."""
+    """LLM-powered review engine with caching, parallelism, and retry logic."""
+    
+    # Default configuration
+    DEFAULT_MAX_CONCURRENT = 3  # Ollama handles limited concurrent requests well
+    DEFAULT_MAX_RETRIES = 3
+    DEFAULT_BASE_DELAY = 1.0  # Base delay for exponential backoff (seconds)
+    DEFAULT_TIMEOUT = 60  # Request timeout (seconds)
     
     def __init__(
         self, 
         model_name: str = "mistral",
-        ollama_url: str = "http://localhost:11434"
+        ollama_url: str = "http://localhost:11434",
+        max_concurrent: int = DEFAULT_MAX_CONCURRENT,
+        max_retries: int = DEFAULT_MAX_RETRIES,
+        enable_cache: bool = True,
     ):
         self.model_name = model_name
         self.ollama_url = ollama_url
+        self.max_concurrent = max_concurrent
+        self.max_retries = max_retries
+        self.enable_cache = enable_cache
         self.labels = self._load_labels()
+        
+        # Prompt cache: hash -> response
+        self._cache: Dict[str, Dict[str, Any]] = {}
+        self._cache_hits = 0
+        self._cache_misses = 0
     
     def _load_labels(self) -> Dict:
         """Load label definitions from config."""
@@ -61,21 +84,65 @@ EXPLANATION: [Brief stakeholder-friendly explanation]
 
 Be precise and concise."""
 
+    def _get_prompt_hash(self, prompt: str) -> str:
+        """Generate a cache key for a prompt."""
+        return hashlib.md5(prompt.encode()).hexdigest()[:16]
+    
+    def get_cache_stats(self) -> Dict[str, Any]:
+        """Return cache statistics."""
+        total = self._cache_hits + self._cache_misses
+        return {
+            "hits": self._cache_hits,
+            "misses": self._cache_misses,
+            "hit_rate": (self._cache_hits / total * 100) if total > 0 else 0,
+            "cached_prompts": len(self._cache),
+        }
+    
+    def clear_cache(self):
+        """Clear the prompt cache."""
+        self._cache.clear()
+        self._cache_hits = 0
+        self._cache_misses = 0
+
     async def review_sample_async(
         self, 
         text: str, 
         pred_label: str, 
         confidence: float,
-        sample_id: str
+        sample_id: str,
+        semaphore: Optional[asyncio.Semaphore] = None,
     ) -> Dict[str, Any]:
-        """Review a single sample asynchronously."""
+        """Review a single sample asynchronously with caching and retry."""
         prompt = self._build_prompt(text, pred_label, confidence)
-        prompt_hash = hashlib.md5(prompt.encode()).hexdigest()[:8]
+        prompt_hash = self._get_prompt_hash(prompt)
         
+        # Check cache first
+        if self.enable_cache and prompt_hash in self._cache:
+            self._cache_hits += 1
+            cached = self._cache[prompt_hash].copy()
+            cached.update({
+                "sample_id": sample_id,
+                "text": text,
+                "pred_label": pred_label,
+                "confidence": confidence,
+                "cache_hit": True,
+            })
+            return cached
+        
+        self._cache_misses += 1
         start_time = time.time()
         
+        # Use semaphore for concurrency control if provided
+        async def _do_review():
+            return await self._call_ollama_with_retry(prompt)
+        
         try:
-            response = await self._call_ollama(prompt)
+            if semaphore:
+                async with semaphore:
+                    response = await _do_review()
+            else:
+                response = await _do_review()
+            
             latency_ms = int((time.time() - start_time) * 1000)
             
             # Parse response
@@ -88,7 +155,22 @@ Be precise and concise."""
                 "success": True,
                 "prompt_hash": prompt_hash,
                 "latency_ms": latency_ms,
+                "cache_hit": False,
             })
+            
+            # Cache the parsed result (without sample-specific fields)
+            if self.enable_cache:
+                cache_entry = {
+                    "verdict": result["verdict"],
+                    "reasoning": result["reasoning"],
+                    "suggested_label": result["suggested_label"],
+                    "explanation": result["explanation"],
+                    "success": True,
+                    "prompt_hash": prompt_hash,
+                    "latency_ms": latency_ms,
+                }
+                self._cache[prompt_hash] = cache_entry
+            
             return result
             
         except Exception as e:
@@ -103,7 +185,35 @@ Be precise and concise."""
                 "explanation": "Review failed",
                 "success": False,
                 "error": str(e),
+                "cache_hit": False,
             }
+    
+    async def _call_ollama_with_retry(self, prompt: str) -> str:
+        """Call Ollama API with exponential backoff retry."""
+        last_exception = None
+        
+        for attempt in range(self.max_retries):
+            try:
+                return await self._call_ollama(prompt)
+            except asyncio.TimeoutError as e:
+                last_exception = e
+                # Timeout is worth retrying
+            except aiohttp.ClientError as e:
+                last_exception = e
+                # Network errors are worth retrying
+            except Exception as e:
+                # For other errors, check if it's a server overload (5xx)
+                if "5" in str(e)[:1]:  # 5xx errors
+                    last_exception = e
+                else:
+                    raise  # Don't retry client errors (4xx)
+            
+            if attempt < self.max_retries - 1:
+                # Exponential backoff with jitter
+                delay = self.DEFAULT_BASE_DELAY * (2 ** attempt) + random.uniform(0, 0.5)
+                await asyncio.sleep(delay)
+        
+        raise last_exception or Exception("Max retries exceeded")
     
     async def _call_ollama(self, prompt: str) -> str:
         """Call Ollama API."""
@@ -115,8 +225,9 @@ Be precise and concise."""
             "options": {"temperature": 0.1, "num_predict": 300}
         }
         
-        async with aiohttp.ClientSession() as session:
-            async with session.post(url, json=payload, timeout=60) as resp:
+        timeout = aiohttp.ClientTimeout(total=self.DEFAULT_TIMEOUT)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.post(url, json=payload) as resp:
                 if resp.status != 200:
                     raise Exception(f"Ollama error: {resp.status}")
                 result = await resp.json()
@@ -154,23 +265,41 @@ Be precise and concise."""
         samples: List[Dict[str, Any]],
         on_progress: Optional[callable] = None
     ) -> List[Dict[str, Any]]:
-        """Review multiple samples."""
-        results = []
+        """Review multiple samples with parallel execution.
         
-        for i, sample in enumerate(samples):
+        Uses asyncio.gather() with a semaphore to limit concurrent requests
+        while maximizing throughput.
+        """
+        semaphore = asyncio.Semaphore(self.max_concurrent)
+        completed = 0
+        total = len(samples)
+        results_lock = asyncio.Lock()
+        
+        async def review_with_progress(sample: Dict) -> Dict:
+            nonlocal completed
             result = await self.review_sample_async(
                 text=sample["text"],
                 pred_label=sample["pred_label"],
                 confidence=sample["confidence"],
-                sample_id=sample["id"]
+                sample_id=sample["id"],
+                semaphore=semaphore,
             )
             result["ground_truth"] = sample.get("ground_truth")
-            results.append(result)
             
-            if on_progress:
-                on_progress(i + 1, len(samples))
+            # Thread-safe progress update
+            async with results_lock:
+                completed += 1
+                if on_progress:
+                    on_progress(completed, total)
+            
+            return result
         
-        return results
+        # Create all tasks and run them concurrently
+        tasks = [review_with_progress(sample) for sample in samples]
+        results = await asyncio.gather(*tasks)
+        
+        # Preserve original order
+        return list(results)
     
     def generate_mock_results(self, samples: List[Dict]) -> List[Dict]:
         """Generate mock results without LLM (for --no-llm mode)."""

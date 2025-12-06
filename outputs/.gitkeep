@@ -1,0 +1,2 @@
+# This file ensures the outputs directory exists on git clone.
+# Generated output directories are gitignored.
