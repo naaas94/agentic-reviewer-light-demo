@@ -1,7 +1,3 @@
-# Agentic Reviewer Demo
-
-[![CI](https://github.com/YOUR_USERNAME/agentic-reviewer-demo/actions/workflows/ci.yml/badge.svg)](https://github.com/YOUR_USERNAME/agentic-reviewer-demo/actions/workflows/ci.yml)
-
 **LLM-powered semantic auditing — no API keys, runs locally, free.**
 
 ```
