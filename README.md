@@ -1,22 +1,40 @@
-**LLM-powered semantic auditing — no API keys, runs locally, free.**
+# Agentic Reviewer Demo
 
+**LLM-powered semantic auditing for text classification — no API keys, runs locally, free.**
+
+## System Overview
+
+```mermaid
+flowchart LR
+    subgraph Input
+        A[Synthetic Data<br/>Generator] --> B[Classification<br/>Samples]
+    end
+    
+    subgraph "LLM Review Engine"
+        B --> C{Ollama<br/>Local LLM}
+        C --> D[Semantic<br/>Analysis]
+        D --> E[Verdict +<br/>Corrections]
+    end
+    
+    subgraph Output
+        E --> F[Labeled Dataset]
+        E --> G[Audit Report]
+        E --> H[Metrics JSON]
+    end
+    
+    style C fill:#4a5568,stroke:#718096
+    style D fill:#2d3748,stroke:#4a5568
+    style E fill:#2d3748,stroke:#4a5568
 ```
-┌─────────────────────────────────────────────────────────────┐
-│  Input: "Delete my data permanently"                        │
-│  Predicted: Access Request (85% confidence)                 │
-│                          ↓                                  │
-│  ┌─────────────────────────────────────────────────────┐   │
-│  │  🤖 Local LLM Analysis (via Ollama)                  │   │
-│  │  • Evaluate prediction accuracy                      │   │
-│  │  • Suggest corrections                               │   │
-│  │  • Generate explanations                             │   │
-│  └─────────────────────────────────────────────────────┘   │
-│                          ↓                                  │
-│  Verdict: ❌ Incorrect                                      │
-│  Suggested: Erasure                                         │
-│  Reason: "Text requests deletion, not data access"         │
-└─────────────────────────────────────────────────────────────┘
-```
+
+**Example Flow:**
+
+| Step | Input | Output |
+|------|-------|--------|
+| 1 | `"Delete my data permanently"` | Predicted: Access Request (85%) |
+| 2 | LLM semantic analysis | Verdict: Incorrect |
+| 3 | Correction suggested | Suggested: Erasure |
+| 4 | Reasoning generated | "Text requests deletion, not data access" |
 
 ---
 
@@ -77,22 +95,22 @@ outputs/2024_12_04_153000/
 ## Terminal Output
 
 ```
-╔══════════════════════════════════════════════════════════════╗
-║                    AGENTIC REVIEWER DEMO                     ║
-╠══════════════════════════════════════════════════════════════╣
-║ Run ID: 2024_12_04_153000                                    ║
-║ Samples: 15 | Seed: 42 | LLM: On                             ║
-╠══════════════════════════════════════════════════════════════╣
-║ PHASE 1: Generate Synthetic Data       ✓ 15 samples          ║
-║ PHASE 2: LLM Review                    ✓ 15/15 reviews       ║
-║ PHASE 3: Generate Report               ✓ 450 words           ║
-║ PHASE 4: Save Artifacts                ✓ 5 files             ║
-╠══════════════════════════════════════════════════════════════╣
-║ RESULTS                                                      ║
-║ ├─ Correct:    10 (66.7%)                                   ║
-║ ├─ Incorrect:   4 (26.7%) → corrections suggested           ║
-║ └─ Uncertain:   1 (6.6%)                                    ║
-╚══════════════════════════════════════════════════════════════╝
++==============================================================+
+|                    AGENTIC REVIEWER DEMO                     |
++==============================================================+
+| Run ID: 2024_12_04_153000                                    |
+| Samples: 15 | Seed: 42 | LLM: On                             |
++--------------------------------------------------------------+
+| PHASE 1: Generate Synthetic Data       [OK] 15 samples       |
+| PHASE 2: LLM Review                    [OK] 15/15 reviews    |
+| PHASE 3: Generate Report               [OK] 450 words        |
+| PHASE 4: Save Artifacts                [OK] 5 files          |
++--------------------------------------------------------------+
+| RESULTS                                                      |
+|   Correct:    10 (66.7%)                                     |
+|   Incorrect:   4 (26.7%) -> corrections suggested            |
+|   Uncertain:   1 (6.6%)                                      |
++==============================================================+
 ```
 
 ---
@@ -111,6 +129,9 @@ python run_demo.py --seed 42
 
 # Quick preview without LLM (for CI/testing)
 python run_demo.py --mock
+
+# Enable verbose/debug logging
+python run_demo.py --verbose
 ```
 
 ### Why Ollama?
@@ -141,19 +162,22 @@ python run_demo.py --mock
 ```
 agentic-reviewer-demo/
 ├── run_demo.py              # Single entry point
-├── requirements.txt         # Minimal dependencies
+├── requirements.txt         # Pinned dependencies
+├── pyproject.toml           # Project configuration (mypy, ruff, pytest)
 ├── core/
 │   ├── synthetic_generator.py  # Data generation with configurable confusion
 │   ├── review_engine.py        # LLM review with caching & parallelism
-│   └── report_generator.py     # Markdown report generation
+│   ├── report_generator.py     # Markdown report generation
+│   └── logging_config.py       # Structured logging configuration
 ├── configs/
 │   └── labels.yaml          # GDPR/CCPA label definitions
 ├── tests/                   # Pytest test suite
 │   ├── test_synthetic_generator.py
 │   ├── test_review_engine.py
-│   └── test_report_generator.py
+│   ├── test_report_generator.py
+│   └── test_integration.py  # End-to-end integration tests
 ├── .github/workflows/       # CI configuration
-│   └── ci.yml
+│   └── ci.yml               # Tests, linting, type checking, security scan
 └── outputs/                 # Generated runs
 ```
 
@@ -180,10 +204,12 @@ pytest tests/ -v --cov=core --cov-report=term-missing
 
 | Feature | Implementation |
 |---------|---------------|
-| **Prompt Caching** | MD5 hash-based cache avoids redundant LLM calls |
+| **Prompt Caching** | MD5 hash-based cache with versioning for invalidation |
 | **Parallel Execution** | `asyncio.gather()` + semaphore for concurrent reviews |
 | **Retry with Backoff** | Exponential backoff for Ollama resilience |
 | **Configurable Confusion** | Static patterns or dynamic semantic similarity |
+| **Structured Logging** | Configurable logging with `--verbose` debug mode |
+| **Robust Parsing** | Regex-based response parsing with fallback |
 
 ---
 
@@ -191,11 +217,11 @@ pytest tests/ -v --cov=core --cov-report=term-missing
 
 This is a **minimal demo** for quick validation. For the full production implementation with:
 
-- 🔒 Security layer (prompt injection detection)
-- ⚡ LRU caching + circuit breaker
-- 🌐 FastAPI REST interface
-- 📊 System monitoring & health checks
-- 📝 SQLite audit logging
+- Security layer (prompt injection detection)
+- LRU caching + circuit breaker
+- FastAPI REST interface
+- System monitoring & health checks
+- SQLite audit logging
 
 See: **[agentic-reviewer](https://github.com/naaas94/agentic-reviewer)**
 
@@ -208,4 +234,3 @@ MIT
 ---
 
 *Built to demonstrate LLM-powered classification auditing.*
-

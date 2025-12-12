@@ -10,6 +10,7 @@ Usage:
     python run_demo.py --no-llm         # Dry run without Ollama
     python run_demo.py --samples 20     # Custom sample count
     python run_demo.py --seed 42        # Reproducible run
+    python run_demo.py --verbose        # Enable debug logging
 """
 
 import argparse
@@ -18,14 +19,22 @@ import json
 import os
 import sys
 import time
+import traceback
 from datetime import datetime
 from typing import Dict, Any, List
+
+# Python version check
+MIN_PYTHON = (3, 9)
+if sys.version_info < MIN_PYTHON:
+    print(f"❌ Python {MIN_PYTHON[0]}.{MIN_PYTHON[1]}+ required (found {sys.version_info.major}.{sys.version_info.minor})")
+    sys.exit(1)
 
 import pandas as pd
 
 from core.synthetic_generator import SyntheticGenerator
 from core.review_engine import ReviewEngine
 from core.report_generator import ReportGenerator
+from core.logging_config import setup_logging, get_logger
 
 
 # ============================================================================
@@ -301,19 +310,27 @@ Examples:
   python run_demo.py --samples 20       # More samples
   python run_demo.py --seed 42          # Reproducible run
   python run_demo.py --mock             # Quick preview without LLM
+  python run_demo.py --verbose          # Enable debug logging
         """
     )
     parser.add_argument("--samples", "-n", type=int, default=12, help="Number of samples (default: 12)")
     parser.add_argument("--seed", "-s", type=int, default=None, help="Random seed for reproducibility")
     parser.add_argument("--mock", action="store_true", help="Use mock results (skip LLM)")
     parser.add_argument("--model", type=str, default="mistral", help="Ollama model (default: mistral)")
+    parser.add_argument("--verbose", "-v", action="store_true", help="Enable verbose/debug logging")
     # Hidden alias for backwards compatibility
     parser.add_argument("--no-llm", action="store_true", dest="mock", help=argparse.SUPPRESS)
     
     args = parser.parse_args()
     seed = args.seed or int(datetime.now().timestamp())
     
+    # Setup logging based on verbosity
+    logger = setup_logging(verbose=args.verbose)
+    module_logger = get_logger("main")
+    
     print("\n🔍 Checking environment...")
+    module_logger.debug(f"Python version: {sys.version}")
+    module_logger.debug(f"Arguments: samples={args.samples}, seed={seed}, mock={args.mock}, model={args.model}")
     
     use_llm = True
     model_to_use = args.model
@@ -324,6 +341,7 @@ Examples:
     else:
         # Check Ollama status
         ollama_running, available_model, status = check_ollama()
+        module_logger.debug(f"Ollama status: running={ollama_running}, model={available_model}, status={status}")
         
         if status == "not_running":
             print("⚠️  Ollama is not running")
@@ -377,7 +395,14 @@ Examples:
         print("\n\n⚠️ Interrupted")
         sys.exit(130)
     except Exception as e:
+        module_logger.error(f"Demo failed: {e}")
         print(f"\n❌ Error: {e}")
+        if args.verbose:
+            print("\n--- Traceback ---")
+            traceback.print_exc()
+            print("-----------------")
+        else:
+            print("Try running with --verbose for detailed error information.")
         print("Try running with --mock for a quick preview.")
         sys.exit(1)
 

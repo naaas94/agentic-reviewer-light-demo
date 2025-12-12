@@ -11,15 +11,23 @@ Features:
 import aiohttp
 import asyncio
 import hashlib
+import re
 import time
 import yaml
 import random
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 
+from core.logging_config import get_logger
+
+logger = get_logger(__name__)
+
 
 class ReviewEngine:
     """LLM-powered review engine with caching, parallelism, and retry logic."""
+    
+    # Prompt version - increment when prompt format changes to invalidate cache
+    PROMPT_VERSION = "v1.0"
     
     # Default configuration
     DEFAULT_MAX_CONCURRENT = 3  # Ollama handles limited concurrent requests well
@@ -85,8 +93,9 @@ EXPLANATION: [Brief stakeholder-friendly explanation]
 Be precise and concise."""
 
     def _get_prompt_hash(self, prompt: str) -> str:
-        """Generate a cache key for a prompt."""
-        return hashlib.md5(prompt.encode()).hexdigest()[:16]
+        """Generate a cache key for a prompt, including version for invalidation."""
+        content = f"{self.PROMPT_VERSION}:{prompt}"
+        return hashlib.md5(content.encode()).hexdigest()[:16]
     
     def get_cache_stats(self) -> Dict[str, Any]:
         """Return cache statistics."""
@@ -119,6 +128,7 @@ Be precise and concise."""
         # Check cache first
         if self.enable_cache and prompt_hash in self._cache:
             self._cache_hits += 1
+            logger.debug(f"Cache hit for sample {sample_id}")
             cached = self._cache[prompt_hash].copy()
             cached.update({
                 "sample_id": sample_id,
@@ -144,6 +154,7 @@ Be precise and concise."""
                 response = await _do_review()
             
             latency_ms = int((time.time() - start_time) * 1000)
+            logger.debug(f"Sample {sample_id} reviewed in {latency_ms}ms")
             
             # Parse response
             result = self._parse_response(response)
@@ -174,6 +185,7 @@ Be precise and concise."""
             return result
             
         except Exception as e:
+            logger.error(f"Failed to review sample {sample_id}: {e}")
             return {
                 "sample_id": sample_id,
                 "text": text,
@@ -197,22 +209,25 @@ Be precise and concise."""
                 return await self._call_ollama(prompt)
             except asyncio.TimeoutError as e:
                 last_exception = e
-                # Timeout is worth retrying
+                logger.warning(f"Timeout on attempt {attempt + 1}/{self.max_retries}")
             except aiohttp.ClientError as e:
                 last_exception = e
-                # Network errors are worth retrying
+                logger.warning(f"Network error on attempt {attempt + 1}/{self.max_retries}: {e}")
             except Exception as e:
                 # For other errors, check if it's a server overload (5xx)
                 if "5" in str(e)[:1]:  # 5xx errors
                     last_exception = e
+                    logger.warning(f"Server error on attempt {attempt + 1}/{self.max_retries}: {e}")
                 else:
                     raise  # Don't retry client errors (4xx)
             
             if attempt < self.max_retries - 1:
                 # Exponential backoff with jitter
                 delay = self.DEFAULT_BASE_DELAY * (2 ** attempt) + random.uniform(0, 0.5)
+                logger.debug(f"Retrying in {delay:.2f}s...")
                 await asyncio.sleep(delay)
         
+        logger.error(f"Max retries exceeded for Ollama call")
         raise last_exception or Exception("Max retries exceeded")
     
     async def _call_ollama(self, prompt: str) -> str:
@@ -234,8 +249,7 @@ Be precise and concise."""
                 return result.get("response", "")
     
     def _parse_response(self, response: str) -> Dict[str, Any]:
-        """Parse LLM response into structured format."""
-        lines = response.strip().split("\n")
+        """Parse LLM response into structured format with regex fallback."""
         result = {
             "verdict": "Uncertain",
             "reasoning": "",
@@ -243,20 +257,46 @@ Be precise and concise."""
             "explanation": "",
         }
         
-        for line in lines:
-            line = line.strip()
-            if line.startswith("VERDICT:"):
-                verdict = line.replace("VERDICT:", "").strip()
-                if verdict in ["Correct", "Incorrect", "Uncertain"]:
-                    result["verdict"] = verdict
-            elif line.startswith("REASONING:"):
-                result["reasoning"] = line.replace("REASONING:", "").strip()
-            elif line.startswith("SUGGESTED_LABEL:"):
-                suggested = line.replace("SUGGESTED_LABEL:", "").strip()
-                if suggested.lower() != "none":
-                    result["suggested_label"] = suggested
-            elif line.startswith("EXPLANATION:"):
-                result["explanation"] = line.replace("EXPLANATION:", "").strip()
+        # Try regex-based parsing first (more robust)
+        verdict_match = re.search(r'VERDICT:\s*(\w+)', response, re.IGNORECASE)
+        if verdict_match:
+            verdict = verdict_match.group(1).capitalize()
+            if verdict in ["Correct", "Incorrect", "Uncertain"]:
+                result["verdict"] = verdict
+                logger.debug(f"Parsed verdict via regex: {verdict}")
+        
+        reasoning_match = re.search(r'REASONING:\s*(.+?)(?=\n[A-Z_]+:|$)', response, re.IGNORECASE | re.DOTALL)
+        if reasoning_match:
+            result["reasoning"] = reasoning_match.group(1).strip().split('\n')[0].strip()
+        
+        suggested_match = re.search(r'SUGGESTED_LABEL:\s*(.+?)(?=\n[A-Z_]+:|$)', response, re.IGNORECASE | re.DOTALL)
+        if suggested_match:
+            suggested = suggested_match.group(1).strip().split('\n')[0].strip()
+            if suggested.lower() != "none":
+                result["suggested_label"] = suggested
+        
+        explanation_match = re.search(r'EXPLANATION:\s*(.+?)(?=\n[A-Z_]+:|$)', response, re.IGNORECASE | re.DOTALL)
+        if explanation_match:
+            result["explanation"] = explanation_match.group(1).strip().split('\n')[0].strip()
+        
+        # Fallback to line-by-line parsing if regex didn't find verdict
+        if result["verdict"] == "Uncertain" and "VERDICT:" in response.upper():
+            lines = response.strip().split("\n")
+            for line in lines:
+                line = line.strip()
+                if line.upper().startswith("VERDICT:"):
+                    verdict = line.split(":", 1)[1].strip()
+                    if verdict in ["Correct", "Incorrect", "Uncertain"]:
+                        result["verdict"] = verdict
+                        logger.debug(f"Parsed verdict via line-by-line: {verdict}")
+                elif line.upper().startswith("REASONING:") and not result["reasoning"]:
+                    result["reasoning"] = line.split(":", 1)[1].strip()
+                elif line.upper().startswith("SUGGESTED_LABEL:") and result["suggested_label"] is None:
+                    suggested = line.split(":", 1)[1].strip()
+                    if suggested.lower() != "none":
+                        result["suggested_label"] = suggested
+                elif line.upper().startswith("EXPLANATION:") and not result["explanation"]:
+                    result["explanation"] = line.split(":", 1)[1].strip()
         
         return result
     

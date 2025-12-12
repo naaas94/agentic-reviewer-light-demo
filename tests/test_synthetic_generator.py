@@ -39,10 +39,12 @@ class TestSyntheticGenerator:
     
     def test_seed_reproducibility(self):
         """Same seed should produce identical samples."""
+        # Create first generator, generate samples
         gen1 = SyntheticGenerator(seed=12345)
-        gen2 = SyntheticGenerator(seed=12345)
-        
         samples1 = gen1.generate_samples(n_samples=10)
+        
+        # Create second generator with same seed (this reseeds random)
+        gen2 = SyntheticGenerator(seed=12345)
         samples2 = gen2.generate_samples(n_samples=10)
         
         assert samples1 == samples2
