@@ -67,6 +67,28 @@ python run_demo.py
 
 Check `outputs/` for generated artifacts.
 
+### Troubleshooting
+
+**If Ollama is installed on a different drive (e.g., D:):**
+
+Ollama stores models in `C:\Users\<username>\.ollama\models\` by default. If you have limited space on C: or installed Ollama on D:, set the `OLLAMA_MODELS` environment variable:
+
+**Windows PowerShell:**
+```powershell
+# Set permanently (requires restarting Ollama)
+[System.Environment]::SetEnvironmentVariable("OLLAMA_MODELS", "D:\Apps\Ollama\models", "User")
+
+# Or use the helper script:
+.\setup_ollama_path.ps1
+```
+
+**Then restart Ollama** for the change to take effect.
+
+**If models aren't detected:**
+- Verify Ollama is running: visit `http://localhost:11434` in your browser
+- Check available models: `ollama list`
+- Download a model manually: `ollama pull mistral`
+
 ---
 
 ## What It Does

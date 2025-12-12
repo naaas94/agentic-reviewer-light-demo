@@ -78,6 +78,27 @@ class UI:
 # HEALTH CHECKS
 # ============================================================================
 
+def get_ollama_config() -> Dict[str, str]:
+    """Get Ollama configuration from environment variables."""
+    import os
+    return {
+        "OLLAMA_MODELS": os.environ.get("OLLAMA_MODELS", ""),
+        "OLLAMA_HOST": os.environ.get("OLLAMA_HOST", ""),
+        "OLLAMA_PORT": os.environ.get("OLLAMA_PORT", ""),
+    }
+
+
+def list_ollama_models(url: str = "http://localhost:11434") -> List[str]:
+    """List all available Ollama models."""
+    try:
+        import urllib.request
+        req = urllib.request.urlopen(f"{url}/api/tags", timeout=5)
+        data = json.loads(req.read())
+        return [m.get("name", "") for m in data.get("models", [])]
+    except Exception:
+        return []
+
+
 def check_ollama(url: str = "http://localhost:11434") -> tuple:
     """Check Ollama availability and model status."""
     try:
@@ -86,14 +107,36 @@ def check_ollama(url: str = "http://localhost:11434") -> tuple:
         data = json.loads(req.read())
         models = [m.get("name", "") for m in data.get("models", [])]
         
-        # Check for any usable model (mistral, llama, tinyllama, etc.)
-        usable_models = [m for m in models if any(x in m.lower() for x in ["mistral", "llama", "phi", "gemma"])]
+        if not models:
+            return True, None, "no_model"
+        
+        # Check for any usable model (mistral, llama, phi, gemma, etc.)
+        # Handle model tags like "mistral:latest" or "llama2:7b"
+        preferred_keywords = ["mistral", "llama", "phi", "gemma", "qwen", "neural", "codellama"]
+        usable_models = []
+        
+        for model in models:
+            model_lower = model.lower()
+            # Check if model name contains any preferred keyword
+            if any(keyword in model_lower for keyword in preferred_keywords):
+                usable_models.append(model)
+        
+        # If no preferred models found, use any available model
+        if not usable_models and models:
+            usable_models = [models[0]]  # Use first available model
         
         if usable_models:
             return True, usable_models[0], "ready"
         else:
             return True, None, "no_model"  # Ollama running but no model
-    except Exception:
+    except urllib.error.URLError as e:
+        # Connection refused or unreachable
+        logger = get_logger("main")
+        logger.debug(f"Ollama connection failed: {e}")
+        return False, None, "not_running"
+    except Exception as e:
+        logger = get_logger("main")
+        logger.debug(f"Ollama check error: {e}")
         return False, None, "not_running"
 
 
@@ -291,10 +334,15 @@ def print_ollama_setup():
 │  1. Install Ollama (free, local, no API keys):              │
 │     https://ollama.ai/download                              │
 │                                                             │
-│  2. Start Ollama:                                           │
-│     ollama serve                                            │
+│  2. Start Ollama server:                                    │
+│     - Windows: Open Ollama from Start menu, or              │
+│     - Command line: ollama serve                            │
 │                                                             │
-│  3. Run this demo again - it will auto-download the model   │
+│  3. Verify it's running:                                    │
+│     - Check system tray for Ollama icon                     │
+│     - Visit http://localhost:11434 in browser               │
+│                                                             │
+│  4. Run this demo again - it will auto-download the model   │
 │                                                             │
 ╰─────────────────────────────────────────────────────────────╯
 """)
@@ -344,23 +392,52 @@ Examples:
         module_logger.debug(f"Ollama status: running={ollama_running}, model={available_model}, status={status}")
         
         if status == "not_running":
-            print("⚠️  Ollama is not running")
+            print("⚠️  Ollama server is not accessible")
+            print("\nNote: If Ollama is running in the system tray, you may need to:")
+            print("  1. Right-click the Ollama icon in the system tray")
+            print("  2. Ensure the server is started (it may be running but not listening)")
+            print("  3. Or restart Ollama from the Start menu")
             print_ollama_setup()
             
             # Offer to continue in mock mode
             print("Options:")
-            print("  1. Install/start Ollama (recommended) - see instructions above")
+            print("  1. Start/restart Ollama server (recommended) - see instructions above")
             print("  2. Run with --mock flag for a quick preview without LLM")
             print()
             sys.exit(1)
             
         elif status == "no_model":
             print(f"✓ Ollama is running")
-            print(f"⚠️  No language model found")
             
-            # Offer to pull model
-            print(f"\nWould you like to download '{args.model}'? (free, ~4GB)")
-            print("This is a one-time download.\n")
+            # Check Ollama configuration
+            config = get_ollama_config()
+            if config["OLLAMA_MODELS"]:
+                module_logger.debug(f"OLLAMA_MODELS set to: {config['OLLAMA_MODELS']}")
+            
+            # Check what models are actually available
+            available_models = list_ollama_models()
+            if available_models:
+                print(f"⚠️  Found {len(available_models)} model(s), but none are compatible:")
+                for model in available_models:
+                    print(f"   - {model}")
+                print(f"\nWould you like to download '{args.model}' instead? (free, ~4GB)")
+            else:
+                print(f"⚠️  No language models installed")
+                
+                # Check if models might be on a different drive
+                if not config["OLLAMA_MODELS"]:
+                    print("\nNote: If Ollama models are stored on a different drive (e.g., D:),")
+                    print("you may need to set the OLLAMA_MODELS environment variable:")
+                    print("  PowerShell: $env:OLLAMA_MODELS = 'D:\\Apps\\Ollama\\models'")
+                    print("  Then restart Ollama for the change to take effect.")
+                    print()
+                
+                print(f"Would you like to download '{args.model}'? (free, ~4GB)")
+            
+            print("This is a one-time download.")
+            print("\nAlternatively, you can download manually:")
+            print(f"  ollama pull {args.model}")
+            print("\n")
             
             try:
                 response = input("Download now? [Y/n]: ").strip().lower()
@@ -368,13 +445,17 @@ Examples:
                     if pull_model(args.model):
                         model_to_use = args.model
                     else:
-                        print("\nFailed to download. Run with --mock for preview.")
+                        print("\nFailed to download. You can try manually:")
+                        print(f"  ollama pull {args.model}")
+                        print("\nOr run with --mock for preview.")
                         sys.exit(1)
                 else:
-                    print("\nRun with --mock for a quick preview without LLM.")
+                    print(f"\nTo download manually, run: ollama pull {args.model}")
+                    print("Or run with --mock for a quick preview without LLM.")
                     sys.exit(0)
             except KeyboardInterrupt:
-                print("\n\nRun with --mock for a quick preview.")
+                print(f"\n\nTo download manually, run: ollama pull {args.model}")
+                print("Or run with --mock for a quick preview.")
                 sys.exit(0)
                 
         else:  # status == "ready"
