@@ -81,8 +81,8 @@ classification errors through LLM-powered semantic analysis.
         """Calculate statistics from results."""
         total = len(results)
         verdicts = {"Correct": 0, "Incorrect": 0, "Uncertain": 0}
-        label_dist = {}
-        corrections = []
+        label_dist: Dict[str, int] = {}
+        corrections: List[Dict[str, Any]] = []
         
         for r in results:
             verdict = r.get("verdict", "Uncertain")

@@ -13,10 +13,10 @@ import asyncio
 import hashlib
 import re
 import time
-import yaml
+import yaml  # type: ignore
 import random
 from pathlib import Path
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Callable
 
 from core.logging_config import get_logger
 
@@ -55,12 +55,13 @@ class ReviewEngine:
         self._cache_hits = 0
         self._cache_misses = 0
     
-    def _load_labels(self) -> Dict:
+    def _load_labels(self) -> Dict[str, Any]:
         """Load label definitions from config."""
         config_path = Path(__file__).parent.parent / "configs" / "labels.yaml"
         if config_path.exists():
             with open(config_path) as f:
-                return yaml.safe_load(f)
+                data: Any = yaml.safe_load(f)
+                return data if data else {"labels": []}
         return {"labels": []}
     
     def _build_prompt(self, text: str, pred_label: str, confidence: float) -> str:
@@ -202,7 +203,7 @@ Be precise and concise."""
     
     async def _call_ollama_with_retry(self, prompt: str) -> str:
         """Call Ollama API with exponential backoff retry."""
-        last_exception = None
+        last_exception: Optional[Exception] = None
         
         for attempt in range(self.max_retries):
             try:
@@ -228,7 +229,7 @@ Be precise and concise."""
                 await asyncio.sleep(delay)
         
         logger.error(f"Max retries exceeded for Ollama call")
-        raise last_exception or Exception("Max retries exceeded")
+        raise last_exception if last_exception else Exception("Max retries exceeded")
     
     async def _call_ollama(self, prompt: str) -> str:
         """Call Ollama API."""
@@ -246,7 +247,8 @@ Be precise and concise."""
                 if resp.status != 200:
                     raise Exception(f"Ollama error: {resp.status}")
                 result = await resp.json()
-                return result.get("response", "")
+                response_text: str = result.get("response", "")
+                return response_text
     
     def _parse_response(self, response: str) -> Dict[str, Any]:
         """Parse LLM response into structured format with regex fallback."""
@@ -303,7 +305,7 @@ Be precise and concise."""
     async def review_batch_async(
         self, 
         samples: List[Dict[str, Any]],
-        on_progress: Optional[callable] = None
+        on_progress: Optional[Callable[[int, int], None]] = None
     ) -> List[Dict[str, Any]]:
         """Review multiple samples with parallel execution.
         

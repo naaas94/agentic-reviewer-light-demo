@@ -10,7 +10,7 @@ Features:
 
 import random
 from datetime import datetime
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Any, Optional, Tuple, Callable
 
 
 class SyntheticGenerator:
@@ -235,7 +235,7 @@ class SyntheticGenerator:
     
     def _add_variation(self, text: str) -> str:
         """Add realistic variation to text."""
-        variations = [
+        variations: List[Callable[[str], str]] = [
             lambda t: t,
             lambda t: t.lower(),
             lambda t: "Hi, " + t[0].lower() + t[1:],
@@ -244,7 +244,8 @@ class SyntheticGenerator:
             lambda t: "URGENT: " + t,
             lambda t: t.replace(".", "!"),
         ]
-        return random.choice(variations)(text)
+        selected = random.choice(variations)
+        return selected(text)
     
     def get_confusion_matrix_preview(self) -> Dict[str, List[str]]:
         """Preview which labels can be confused with which.
