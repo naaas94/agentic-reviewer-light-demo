@@ -131,12 +131,32 @@ class TestEndToEndDemo:
                 timeout=30,
             )
 
-        # Find the two most recent runs
+        # Find runs with this specific seed
         outputs_dir = Path("outputs")
-        run_dirs = sorted(outputs_dir.glob("*"), key=lambda x: x.name, reverse=True)[:2]
+        matching_runs = []
 
-        if len(run_dirs) < 2:
-            pytest.skip("Need at least 2 runs to test reproducibility")
+        for run_dir in outputs_dir.glob("*"):
+            if not run_dir.is_dir():
+                continue
+
+            config_path = run_dir / "00_config.json"
+            if config_path.exists():
+                try:
+                    with open(config_path) as f:
+                        config = json.load(f)
+                    if config.get("seed") == seed:
+                        matching_runs.append(run_dir)
+                except Exception:
+                    continue
+
+        # Sort by name (timestamp) descending
+        matching_runs.sort(key=lambda x: x.name, reverse=True)
+
+        if len(matching_runs) < 2:
+            pytest.skip("Need at least 2 runs with seed 77777 to test reproducibility")
+
+        # Compare the two most recent runs with this seed
+        run_dirs = matching_runs[:2]
 
         # Compare synthetic data (should be identical with same seed)
         df1 = pd.read_csv(run_dirs[0] / "01_synthetic_data.csv")
