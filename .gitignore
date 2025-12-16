@@ -20,7 +20,14 @@ env/
 # Demo outputs (keep .gitkeep)
 outputs/*/
 
+# Local caches
+.cache/
+*.db
+prompt_cache.db
+
 # OS
 .DS_Store
 Thumbs.db
 
+# misc
+OPTIMIZATION_OPPORTUNITIES.md
