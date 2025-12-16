@@ -107,7 +107,7 @@ class OllamaHTTPError(Exception):
 
 class ReviewEngine:
     """LLM-powered review engine with caching, parallelism, and retry logic.
-    
+
     Security features:
     - Output schema validation (only Correct/Incorrect/Uncertain verdicts)
     - Label guardrails (rejects labels not in labels.yaml)
@@ -167,7 +167,7 @@ class ReviewEngine:
         self.strict_validation = strict_validation
         self.use_compact_prompt = use_compact_prompt
         self.labels = self._load_labels()
-        
+
         # Build set of valid label names for fast lookup (case-insensitive)
         self._valid_labels: Set[str] = set()
         self._valid_labels_lower: Dict[str, str] = {}  # lowercase -> canonical name
@@ -192,7 +192,7 @@ class ReviewEngine:
                 cache_dir=cache_dir,
                 ttl_hours=cache_ttl_hours,
             )
-        
+
         # Validation statistics
         self._validation_failures = 0
         self._invalid_labels_rejected = 0
@@ -211,7 +211,7 @@ class ReviewEngine:
 
     def _validate_verdict(self, verdict: str) -> Verdict:
         """Validate and sanitize verdict value.
-        
+
         Returns:
             Validated Verdict enum value, defaults to UNCERTAIN if invalid.
         """
@@ -225,25 +225,25 @@ class ReviewEngine:
 
     def _validate_label(self, label: Optional[str]) -> tuple[Optional[str], bool]:
         """Validate suggested label against known labels.
-        
+
         Args:
             label: The label to validate
-            
+
         Returns:
             Tuple of (canonical_label_or_none, was_valid)
         """
         if label is None or label.lower() in ("none", "n/a", ""):
             return None, True
-            
+
         # Check exact match first
         if label in self._valid_labels:
             return label, True
-            
+
         # Try case-insensitive match
         canonical = self._valid_labels_lower.get(label.lower())
         if canonical:
             return canonical, True
-            
+
         # Label not found - this is a guardrail violation
         logger.warning(f"Model suggested invalid label '{label}' - rejecting")
         self._invalid_labels_rejected += 1
@@ -251,34 +251,34 @@ class ReviewEngine:
 
     def _validate_output(self, parsed: Dict[str, Any], raw_response: str = "") -> ValidationResult:
         """Validate parsed LLM output for integrity.
-        
+
         Checks:
         1. Verdict is one of Correct/Incorrect/Uncertain
         2. Suggested label (if any) exists in labels.yaml
         3. No obvious prompt injection patterns
         4. Output length limits (defense against resource exhaustion)
         5. No embedded code/markup injection
-        
+
         Args:
             parsed: The parsed response dictionary
             raw_response: Original raw response for length validation
-            
+
         Returns:
             ValidationResult with sanitized values and any issues found.
         """
         issues: List[str] = []
-        
+
         # Check total output length (potential attack vector)
         if raw_response and len(raw_response) > MAX_OUTPUT_TOTAL_LENGTH:
             issues.append(f"Response exceeds max length ({len(raw_response)} > {MAX_OUTPUT_TOTAL_LENGTH})")
             logger.warning(f"Truncating excessively long response: {len(raw_response)} chars")
-        
+
         # Validate verdict
         raw_verdict = parsed.get("verdict", "Uncertain")
         sanitized_verdict = self._validate_verdict(raw_verdict)
         if raw_verdict not in ("Correct", "Incorrect", "Uncertain"):
             issues.append(f"Invalid verdict '{raw_verdict}' sanitized to {sanitized_verdict.value}")
-        
+
         # Validate suggested label
         raw_label = parsed.get("suggested_label")
         sanitized_label, label_valid = self._validate_label(raw_label)
@@ -288,38 +288,36 @@ class ReviewEngine:
             if sanitized_verdict == Verdict.INCORRECT:
                 sanitized_verdict = Verdict.UNCERTAIN
                 issues.append("Downgraded verdict to Uncertain due to invalid label")
-        
+
         # Truncate excessively long reasoning/explanation
         reasoning = parsed.get("reasoning", "")
         explanation = parsed.get("explanation", "")
-        
+
         if len(reasoning) > MAX_REASONING_LENGTH:
             issues.append(f"Reasoning truncated ({len(reasoning)} > {MAX_REASONING_LENGTH})")
             parsed["reasoning"] = reasoning[:MAX_REASONING_LENGTH] + "... [TRUNCATED]"
-        
+
         if len(explanation) > MAX_EXPLANATION_LENGTH:
             issues.append(f"Explanation truncated ({len(explanation)} > {MAX_EXPLANATION_LENGTH})")
             parsed["explanation"] = explanation[:MAX_EXPLANATION_LENGTH] + "... [TRUNCATED]"
-        
+
         # Check for potential prompt injection patterns in all text fields
         text_to_check = f"{reasoning} {explanation} {raw_response}"
-        injection_detected = False
-        
+
         for pattern in SUSPICIOUS_PATTERNS:
             if re.search(pattern, text_to_check, re.IGNORECASE):
-                issues.append(f"Suspicious pattern detected: potential prompt injection")
+                issues.append("Suspicious pattern detected: potential prompt injection")
                 self._validation_failures += 1
-                injection_detected = True
                 logger.warning(f"Prompt injection pattern matched: {pattern[:30]}...")
                 # Don't fully trust this output
                 if self.strict_validation:
                     sanitized_verdict = Verdict.UNCERTAIN
                 break
-        
+
         # Log validation results for security auditing
         if issues:
             logger.debug(f"Validation issues ({len(issues)}): {issues}")
-        
+
         return ValidationResult(
             is_valid=len(issues) == 0,
             issues=issues,
@@ -414,7 +412,7 @@ Be precise and concise."""
         semaphore: Optional[asyncio.Semaphore] = None,
     ) -> Dict[str, Any]:
         """Review a single sample asynchronously with caching, retry, and validation.
-        
+
         Security:
         - All outputs are validated against schema and label guardrails
         - Results are marked as 'untrusted' (sourced from LLM)
@@ -456,12 +454,12 @@ Be precise and concise."""
 
             # Parse response
             parsed = self._parse_response(response)
-            
+
             # Validate output integrity (schema + label guardrails + injection detection)
             validation = self._validate_output(parsed, raw_response=response)
             if not validation.is_valid:
                 logger.debug(f"Validation issues for {sample_id}: {validation.issues}")
-            
+
             # Build result with sanitized/validated values
             result = {
                 "verdict": validation.sanitized_verdict.value,
@@ -536,7 +534,7 @@ Be precise and concise."""
                     )
                 else:
                     raise
-            except Exception as e:
+            except Exception:
                 # Unknown errors: fail fast (we don't know if it's safe to retry)
                 raise
 
@@ -805,7 +803,10 @@ class PersistentCache:
                 (prompt_hash,),
             )
             try:
-                return json.loads(response_text)
+                cached = json.loads(response_text)
+                if isinstance(cached, dict):
+                    return cached
+                return None
             except json.JSONDecodeError:
                 return None
 

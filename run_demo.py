@@ -33,14 +33,13 @@ from core.report_generator import ReportGenerator
 from core.review_engine import ReviewEngine
 from core.synthetic_generator import SyntheticGenerator
 
-
 # ============================================================================
 # DEMO PRESETS
 # ============================================================================
 
 class DemoPresets:
     """Predefined configurations for common use cases."""
-    
+
     # Demo-fast: Optimized for reliable, quick demos on sales laptops
     DEMO_FAST = {
         "max_concurrent": 1,      # Single request - most reliable
@@ -49,7 +48,7 @@ class DemoPresets:
         "samples": 8,             # Fewer samples for speed
         "temperature": 0.1,       # Low temperature for consistency
     }
-    
+
     # Benchmark: For reproducible performance testing
     BENCHMARK = {
         "max_concurrent": 1,
@@ -66,7 +65,7 @@ class DemoPresets:
 
 def detect_gpu_info() -> Dict[str, Any]:
     """Detect GPU information for Ollama acceleration.
-    
+
     Returns dict with:
         - has_gpu: bool - whether a usable GPU was detected
         - gpu_name: str - GPU name if detected
@@ -79,7 +78,7 @@ def detect_gpu_info() -> Dict[str, Any]:
         "gpu_vram_gb": None,
         "gpu_type": "none",
     }
-    
+
     # Try NVIDIA GPU detection (most common for Ollama acceleration)
     try:
         import subprocess
@@ -105,12 +104,12 @@ def detect_gpu_info() -> Dict[str, Any]:
         pass
     except Exception:
         pass
-    
+
     # Check for Apple Silicon (Metal acceleration)
     if platform.system() == "Darwin":
         try:
             import subprocess
-            result = subprocess.run(["sysctl", "-n", "machdep.cpu.brand_string"], 
+            result = subprocess.run(["sysctl", "-n", "machdep.cpu.brand_string"],
                                     capture_output=True, text=True, timeout=5)
             if "Apple" in result.stdout:
                 gpu_info["has_gpu"] = True
@@ -120,13 +119,13 @@ def detect_gpu_info() -> Dict[str, Any]:
                 return gpu_info
         except Exception:
             pass
-    
+
     return gpu_info
 
 
 def detect_system_resources() -> Dict[str, Any]:
     """Detect available system resources for auto-tuning.
-    
+
     Returns comprehensive system info including CPU, RAM, and GPU.
     """
     resources = {
@@ -134,14 +133,14 @@ def detect_system_resources() -> Dict[str, Any]:
         "platform": platform.system(),
         "ram_gb": None,
     }
-    
+
     # Try to get RAM info
     try:
         if platform.system() == "Windows":
             import ctypes
             kernel32 = ctypes.windll.kernel32
             c_ulong = ctypes.c_ulong
-            
+
             class MEMORYSTATUS(ctypes.Structure):
                 _fields_ = [
                     ('dwLength', c_ulong),
@@ -153,7 +152,7 @@ def detect_system_resources() -> Dict[str, Any]:
                     ('dwTotalVirtual', c_ulong),
                     ('dwAvailVirtual', c_ulong),
                 ]
-            
+
             memstatus = MEMORYSTATUS()
             memstatus.dwLength = ctypes.sizeof(MEMORYSTATUS)
             kernel32.GlobalMemoryStatus(ctypes.byref(memstatus))
@@ -168,34 +167,34 @@ def detect_system_resources() -> Dict[str, Any]:
                         break
     except Exception:
         pass  # RAM detection failed, leave as None
-    
+
     # Detect GPU
     resources["gpu"] = detect_gpu_info()
-    
+
     return resources
 
 
 def suggest_concurrency(resources: Dict[str, Any], model_name: str) -> Tuple[int, str]:
     """Suggest optimal concurrency based on system resources and model size.
-    
+
     Conservative defaults prioritize reliability over speed.
-    
+
     Returns:
         Tuple of (suggested_concurrency, reason)
     """
     # Default: single request is safest for demos
     suggested = 1
     reason = "default (safest for demos)"
-    
+
     ram_gb = resources.get("ram_gb")
     cpu_count = resources.get("cpu_count", 1)
     gpu_info = resources.get("gpu", {})
     model_info = get_model_info(model_name)
-    
+
     model_size_gb = model_info["estimated_size_gb"]
     has_gpu = gpu_info.get("has_gpu", False)
     gpu_vram_gb = gpu_info.get("gpu_vram_gb")
-    
+
     # GPU-accelerated inference can handle more concurrency
     if has_gpu:
         if gpu_vram_gb and gpu_vram_gb >= 16:
@@ -216,12 +215,12 @@ def suggest_concurrency(resources: Dict[str, Any], model_name: str) -> Tuple[int
             if ram_gb and ram_gb >= 16 and model_size_gb <= 8:
                 suggested = 2
                 reason = "Apple Silicon unified memory"
-    
+
     # CPU-only: be more conservative
     elif ram_gb:
         # Need headroom: model in RAM + OS + working memory
         available_for_model = ram_gb - 4  # Reserve 4GB for OS/other
-        
+
         if available_for_model >= model_size_gb * 2 and cpu_count >= 8:
             # Plenty of RAM headroom
             if model_size_gb <= 4:
@@ -230,10 +229,10 @@ def suggest_concurrency(resources: Dict[str, Any], model_name: str) -> Tuple[int
         elif ram_gb >= 32 and model_size_gb <= 8:
             suggested = 2
             reason = f"high RAM ({ram_gb:.0f}GB)"
-    
+
     # Never exceed reasonable limits
     suggested = min(suggested, 4)
-    
+
     return suggested, reason
 
 # Python version check
@@ -248,15 +247,15 @@ if sys.version_info < MIN_PYTHON:
 
 def detect_potential_pii(samples: List[Dict[str, Any]]) -> Dict[str, Any]:
     """Detect potential PII patterns in sample data.
-    
+
     This is a lightweight heuristic check, NOT a comprehensive PII detector.
     Used to warn users when they might be processing real data without redaction.
-    
+
     Returns:
         Dict with has_potential_pii, detected_patterns, sample_count
     """
     import re
-    
+
     pii_patterns = {
         "email": r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b',
         "phone": r'\b(?:\+?1[-.]?)?\(?[0-9]{3}\)?[-.]?[0-9]{3}[-.]?[0-9]{4}\b',
@@ -265,29 +264,29 @@ def detect_potential_pii(samples: List[Dict[str, Any]]) -> Dict[str, Any]:
         "ip_address": r'\b(?:\d{1,3}\.){3}\d{1,3}\b',
         "name_like": r'\b(?:Mr\.|Mrs\.|Ms\.|Dr\.)\s+[A-Z][a-z]+\b',
     }
-    
+
     detected = []
     samples_with_pii = 0
-    
+
     for sample in samples:
         text = sample.get("text", "")
         sample_has_pii = False
-        
+
         for pattern_name, pattern in pii_patterns.items():
             if re.search(pattern, text, re.IGNORECASE):
                 if pattern_name not in detected:
                     detected.append(pattern_name)
                 sample_has_pii = True
-        
+
         if sample_has_pii:
             samples_with_pii += 1
-    
+
     # Also check if data looks "real" vs synthetic (synthetic IDs have known patterns)
     is_synthetic = all(
         sample.get("id", "").startswith("demo_") or sample.get("id", "").startswith("synth_")
         for sample in samples
     )
-    
+
     return {
         "has_potential_pii": len(detected) > 0,
         "is_synthetic": is_synthetic,
@@ -384,7 +383,7 @@ MODEL_PREFERENCES = [
 
 def get_model_info(model_name: str) -> Dict[str, Any]:
     """Get estimated model info based on name patterns.
-    
+
     Returns:
         Dict with estimated_size_gb, is_quantized, context_size
     """
@@ -393,13 +392,13 @@ def get_model_info(model_name: str) -> Dict[str, Any]:
         "is_quantized": False,
         "context_size": 4096,
     }
-    
+
     model_lower = model_name.lower()
-    
+
     # Detect quantization (various naming patterns: :q4, -q4, q4_, _q4)
     if any(q in model_lower for q in [":q4", ":q5", ":q8", "q4_", "q5_", "q8_", "-q4", "-q5", "-q8", "_q4", "_q5", "_q8"]):
         info["is_quantized"] = True
-    
+
     # Estimate size based on parameter count in name
     if "70b" in model_lower:
         info["estimated_size_gb"] = 40.0 if info["is_quantized"] else 140.0
@@ -415,11 +414,11 @@ def get_model_info(model_name: str) -> Dict[str, Any]:
         info["estimated_size_gb"] = 1.0 if info["is_quantized"] else 3.0
     elif any(small in model_lower for small in ["phi", "tinyllama", "gemma:2b"]):
         info["estimated_size_gb"] = 2.0
-    
+
     # Detect extended context
     if any(ctx in model_lower for ctx in ["32k", "128k", "context"]):
         info["context_size"] = 32768
-    
+
     return info
 
 
@@ -428,21 +427,21 @@ def check_ollama(
     preferred_model: Optional[str] = None
 ) -> Tuple[bool, Optional[str], str, List[str]]:
     """Check Ollama availability and select best model.
-    
+
     Model selection priority:
     1. Exact match to preferred_model (if specified)
     2. Prefix match to preferred_model (e.g., "mistral" matches "mistral:latest")
     3. Best model from preference list based on priority score
     4. Any available model as fallback
-    
+
     Returns:
         Tuple of (is_running, selected_model, status, all_models)
     """
     logger = get_logger("main")
-    
+
     try:
-        import urllib.request
         import urllib.error
+        import urllib.request
         req = urllib.request.urlopen(f"{url}/api/tags", timeout=5)
         data = json.loads(req.read())
         models = [m.get("name", "") for m in data.get("models", [])]
@@ -455,19 +454,19 @@ def check_ollama(
             if preferred_model in models:
                 logger.debug(f"Exact model match: {preferred_model}")
                 return True, preferred_model, "ready", models
-            
+
             # Priority 2: Prefix match (e.g., "mistral" matches "mistral:latest")
             for model in models:
                 if model.startswith(preferred_model) or model.split(":")[0] == preferred_model:
                     logger.debug(f"Prefix model match: {model} (requested: {preferred_model})")
                     return True, model, "ready", models
-            
+
             logger.debug(f"Preferred model '{preferred_model}' not found, selecting best available")
 
         # Priority 3: Score all available models and pick best
         best_model = None
         best_score = float('inf')  # Lower is better
-        
+
         for model in models:
             model_lower = model.lower()
             for keyword, priority, _ in MODEL_PREFERENCES:
@@ -478,12 +477,12 @@ def check_ollama(
                     # Prefer instruction-tuned variants
                     if "instruct" in model_lower or "chat" in model_lower:
                         priority -= 1
-                    
+
                     if priority < best_score:
                         best_score = priority
                         best_model = model
                     break
-        
+
         if best_model:
             model_info = get_model_info(best_model)
             logger.debug(f"Selected model: {best_model} (score: {best_score}, ~{model_info['estimated_size_gb']:.1f}GB)")
@@ -621,7 +620,7 @@ class Demo:
         generator = SyntheticGenerator(seed=self.seed)
         samples = generator.generate_samples(self.n_samples)
         UI.phase(1, "Generate Synthetic Data", f"{len(samples)} samples")
-        
+
         # Security check: warn if data looks like real PII and redaction is off
         pii_check = detect_potential_pii(samples)
         if pii_check["has_potential_pii"] and not self.redact:
@@ -699,7 +698,7 @@ class Demo:
                 # Warm-up is best-effort; continue even if it fails
                 logger = get_logger("main")
                 logger.debug(f"Warm-up skipped due to error: {warm_err}")
-        
+
         # Now run the actual review
         return await self._review_with_progress(engine, samples)
 
@@ -714,16 +713,16 @@ class Demo:
 
     def _redact_text(self, text: str) -> str:
         """Redact potentially sensitive text content.
-        
+
         For demo purposes, replaces the middle portion of text with [REDACTED].
         In production, this should use more sophisticated PII detection.
         """
         if not self.redact or not text:
             return text
-        
+
         if len(text) <= 20:
             return "[REDACTED]"
-        
+
         # Keep first and last 10 chars, redact middle
         return f"{text[:10]}[...REDACTED...]{text[-10:]}"
 
@@ -741,7 +740,7 @@ class Demo:
             "strict_validation": self.strict_validation,
             "_warning": "UNTRUSTED: LLM-generated content requires human verification",
         }
-        
+
         with open(f"{self.run_dir}/00_config.json", "w") as f:
             json.dump(config_data, f, indent=2)
 
@@ -761,7 +760,7 @@ class Demo:
             # Ensure untrusted marker is present
             r_copy["_untrusted"] = True
             results_to_save.append(r_copy)
-        
+
         with open(f"{self.run_dir}/02_review_results.json", "w") as f:
             json.dump(results_to_save, f, indent=2)
 
@@ -787,7 +786,7 @@ class Demo:
         stats = self._calculate_stats(results)
         stats["_warning"] = "UNTRUSTED: Statistics derived from LLM outputs"
         stats["redacted"] = self.redact
-        
+
         with open(f"{self.run_dir}/05_metrics.json", "w") as f:
             json.dump(stats, f, indent=2)
 
@@ -850,38 +849,38 @@ Examples:
   python run_demo.py --redact           # Redact sensitive text in outputs
   python run_demo.py --mock             # Quick preview without LLM
   python run_demo.py --verbose          # Enable debug logging
-  
+
 Presets:
   --demo-fast     Quick, reliable demo (8 samples, 1 concurrent, short responses)
   --benchmark     Reproducible performance testing (deterministic, no variance)
         """
     )
-    
+
     # Preset options (mutually exclusive convenience flags)
     preset_group = parser.add_argument_group("presets", "Pre-configured settings for common use cases")
-    preset_group.add_argument("--demo-fast", action="store_true", 
+    preset_group.add_argument("--demo-fast", action="store_true",
                               help="Quick demo preset: fewer samples, faster responses, max reliability")
     preset_group.add_argument("--benchmark", action="store_true",
                               help="Benchmark preset: deterministic, reproducible results")
-    
+
     # Core options
     parser.add_argument("--samples", "-n", type=int, default=None, help="Number of samples (default: 12)")
     parser.add_argument("--seed", "-s", type=int, default=None, help="Random seed for reproducibility")
     parser.add_argument("--mock", action="store_true", help="Use mock results (skip LLM)")
     parser.add_argument("--model", type=str, default="mistral", help="Ollama model (default: mistral)")
     parser.add_argument("--ollama-url", type=str, default="http://localhost:11434", help="Ollama base URL")
-    
+
     # Performance tuning
     perf_group = parser.add_argument_group("performance", "Performance tuning options")
-    perf_group.add_argument("--max-concurrent", type=int, default=None, 
+    perf_group.add_argument("--max-concurrent", type=int, default=None,
                             help=f"Max concurrent Ollama requests (default: {ReviewEngine.DEFAULT_MAX_CONCURRENT})")
-    perf_group.add_argument("--max-retries", type=int, default=ReviewEngine.DEFAULT_MAX_RETRIES, 
+    perf_group.add_argument("--max-retries", type=int, default=ReviewEngine.DEFAULT_MAX_RETRIES,
                             help="Max retries per request")
-    perf_group.add_argument("--timeout", type=int, default=None, 
+    perf_group.add_argument("--timeout", type=int, default=None,
                             help=f"Per-request timeout seconds (default: {ReviewEngine.DEFAULT_TIMEOUT})")
-    perf_group.add_argument("--num-predict", type=int, default=None, 
+    perf_group.add_argument("--num-predict", type=int, default=None,
                             help=f"Ollama num_predict tokens (default: {ReviewEngine.DEFAULT_NUM_PREDICT})")
-    perf_group.add_argument("--temperature", type=float, default=None, 
+    perf_group.add_argument("--temperature", type=float, default=None,
                             help=f"Ollama temperature (default: {ReviewEngine.DEFAULT_TEMPERATURE})")
     perf_group.add_argument("--auto-tune", action="store_true",
                             help="Auto-tune concurrency based on system resources")
@@ -889,28 +888,28 @@ Presets:
                             help="Use compact prompt template to reduce latency")
     perf_group.add_argument("--cache-dir", type=str, default=".cache",
                             help="Directory for persistent prompt cache (default: .cache)")
-    
+
     # Security options
     security_group = parser.add_argument_group("security", "Security and privacy options")
     security_group.add_argument("--redact", action="store_true",
                                 help="Redact potentially sensitive text in output artifacts")
     security_group.add_argument("--no-strict-validation", action="store_true",
                                 help="Disable strict output validation (not recommended)")
-    
+
     # Other options
     parser.add_argument("--no-cache", action="store_true", help="Disable prompt cache")
     parser.add_argument("--no-persistent-cache", action="store_true",
                         help="Disable disk-backed prompt cache (memory cache still used)")
-    parser.add_argument("--yes", action="store_true", 
+    parser.add_argument("--yes", action="store_true",
                         help="Non-interactive: auto-download model if needed (no prompts)")
     parser.add_argument("--verbose", "-v", action="store_true", help="Enable verbose/debug logging")
     parser.add_argument("--no-warmup", action="store_true", help="Skip model warm-up request")
-    
+
     # Hidden aliases for backwards compatibility
     parser.add_argument("--no-llm", action="store_true", dest="mock", help=argparse.SUPPRESS)
 
     args = parser.parse_args()
-    
+
     # Apply presets (presets set defaults, explicit args override)
     if args.demo_fast:
         preset = DemoPresets.DEMO_FAST
@@ -918,14 +917,14 @@ Presets:
         preset = DemoPresets.BENCHMARK
     else:
         preset = {}
-    
+
     # Resolve final values: explicit arg > preset > system default
     n_samples = args.samples if args.samples is not None else preset.get("samples", 12)
     max_concurrent = args.max_concurrent if args.max_concurrent is not None else preset.get("max_concurrent", ReviewEngine.DEFAULT_MAX_CONCURRENT)
     timeout_s = args.timeout if args.timeout is not None else preset.get("timeout", ReviewEngine.DEFAULT_TIMEOUT)
     num_predict = args.num_predict if args.num_predict is not None else preset.get("num_predict", ReviewEngine.DEFAULT_NUM_PREDICT)
     temperature = args.temperature if args.temperature is not None else preset.get("temperature", ReviewEngine.DEFAULT_TEMPERATURE)
-    
+
     seed = args.seed or int(datetime.now().timestamp())
     warmup = not args.no_warmup
     persistent_cache = not args.no_persistent_cache
@@ -939,25 +938,25 @@ Presets:
     print("\n🔍 Checking environment...")
     module_logger.debug(f"Python version: {sys.version}")
     module_logger.debug(f"Arguments: samples={n_samples}, seed={seed}, mock={args.mock}, model={args.model}")
-    
+
     # Show preset info
     if args.demo_fast:
         print("📦 Using --demo-fast preset (optimized for quick, reliable demos)")
     elif args.benchmark:
         print("📦 Using --benchmark preset (deterministic, reproducible)")
-    
+
     # Auto-tune concurrency if requested
     if args.auto_tune:
         resources = detect_system_resources()
         suggested, reason = suggest_concurrency(resources, args.model)
         gpu_info = resources.get("gpu", {})
-        
+
         if gpu_info.get("has_gpu"):
             gpu_name = gpu_info.get("gpu_name", "Unknown GPU")
             vram = gpu_info.get("gpu_vram_gb")
             vram_str = f" ({vram:.0f}GB)" if vram else ""
             module_logger.debug(f"Detected GPU: {gpu_name}{vram_str}")
-        
+
         if suggested != max_concurrent:
             module_logger.debug(f"Auto-tune: system resources = {resources}")
             print(f"🔧 Auto-tuned concurrency: {max_concurrent} → {suggested} ({reason})")
