@@ -30,6 +30,7 @@ import pandas as pd
 
 from core.config_loader import get_config
 from core.logging_config import get_logger, setup_logging
+from core.observability import ObservabilityCollector
 from core.report_generator import ReportGenerator
 from core.review_engine import ReviewEngine
 from core.synthetic_generator import SyntheticGenerator
@@ -576,6 +577,7 @@ class Demo:
         self.strict_validation = strict_validation
         self.run_id = datetime.now().strftime("%Y_%m_%d_%H%M%S")
         self.run_dir = f"outputs/{self.run_id}"
+        self.observability = ObservabilityCollector(self.run_id)
 
     def run(self) -> Dict[str, Any]:
         """Execute complete demo."""
@@ -592,8 +594,11 @@ class Demo:
         os.makedirs(self.run_dir, exist_ok=True)
 
         # Phase 1: Generate data
+        self.observability.start_phase("data_generation")
         generator = SyntheticGenerator(seed=self.seed)
         samples = generator.generate_samples(self.n_samples)
+        self.observability.end_phase("data_generation", len(samples))
+        self.observability.capture_system_snapshot()
         UI.phase(1, "Generate Synthetic Data", f"{len(samples)} samples")
 
         # Security check: warn if data looks like real PII and redaction is off
@@ -614,6 +619,7 @@ class Demo:
             UI.row("      Consider --redact if using real client data")
 
         # Phase 2: Review
+        self.observability.start_phase("llm_review")
         engine = ReviewEngine(
             model_name=self.model,
             ollama_url=self.ollama_url,
@@ -627,6 +633,7 @@ class Demo:
             persistent_cache=self.persistent_cache,
             cache_dir=self.cache_dir,
             use_compact_prompt=self.use_compact_prompt,
+            observability=self.observability,
         )
         if self.use_llm:
             # Run warm-up and review in the same event loop to avoid session issues
@@ -634,17 +641,28 @@ class Demo:
         else:
             results = engine.generate_mock_results(samples)
 
+        # Record latencies from results
+        for r in results:
+            if "latency_ms" in r:
+                self.observability.record_latency(r["latency_ms"])
+
+        self.observability.end_phase("llm_review", len(results))
+        self.observability.capture_system_snapshot()
         success = sum(1 for r in results if r.get("success"))
         UI.phase(2, "LLM Review", f"{success}/{len(results)} reviews")
 
         # Phase 3: Generate report
+        self.observability.start_phase("report_generation")
         report_gen = ReportGenerator()
         report = report_gen.generate_report(results, self.run_id, {"seed": self.seed})
+        self.observability.end_phase("report_generation")
         UI.phase(3, "Generate Report", f"{len(report.split())} words")
 
         # Phase 4: Save artifacts
+        self.observability.start_phase("artifact_saving")
         self._save_artifacts(samples, results, report, generator.get_metadata())
-        UI.phase(4, "Save Artifacts", "5 files")
+        self.observability.end_phase("artifact_saving")
+        UI.phase(4, "Save Artifacts", "7 files")
 
         # Results summary
         duration = time.time() - start_time
@@ -681,6 +699,9 @@ class Demo:
         """Review with progress indicator."""
         def on_progress(current, total):
             UI.progress(current, total)
+            # Capture system snapshot periodically (every 25% or at start/mid/end)
+            if current == 1 or current == total // 2 or current == total:
+                self.observability.capture_system_snapshot()
 
         results = await engine.review_batch_async(samples, on_progress)
         print()  # Clear progress line
@@ -764,6 +785,10 @@ class Demo:
 
         with open(f"{self.run_dir}/05_metrics.json", "w") as f:
             json.dump(stats, f, indent=2)
+
+        # Observability data
+        self.observability.save_to_file(f"{self.run_dir}/06_observability.json")
+        self.observability.save_event_log(f"{self.run_dir}/07_events.log")
 
     def _calculate_stats(self, results: List[Dict]) -> Dict:
         total = len(results)

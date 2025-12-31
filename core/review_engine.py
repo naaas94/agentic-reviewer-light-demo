@@ -156,6 +156,7 @@ class ReviewEngine:
         cache_dir: Optional[str] = None,
         cache_ttl_hours: Optional[int] = None,
         use_compact_prompt: Optional[bool] = None,
+        observability: Optional[Any] = None,
     ):
         """Initialize ReviewEngine with config defaults if parameters not provided."""
         # Load config for defaults
@@ -167,27 +168,18 @@ class ReviewEngine:
         # Use provided values or fall back to config, then hardcoded defaults
         self.model_name = model_name or config.get_model_default()
         self.ollama_url = ollama_url or config.get_ollama_url()
-        self.max_concurrent = max_concurrent or perf_config.get("max_concurrent", DEFAULT_MAX_CONCURRENT)
-        self.max_retries = max_retries or perf_config.get("max_retries", DEFAULT_MAX_RETRIES)
-        self.timeout_s = timeout_s or perf_config.get("timeout", DEFAULT_TIMEOUT)
-        self.num_predict = num_predict or perf_config.get("num_predict", DEFAULT_NUM_PREDICT)
-        self.temperature = temperature if temperature is not None else perf_config.get("temperature", DEFAULT_TEMPERATURE)
+        self.max_concurrent = max_concurrent if max_concurrent is not None else perf_config.get("max_concurrent", ReviewEngine.DEFAULT_MAX_CONCURRENT)
+        self.max_retries = max_retries if max_retries is not None else perf_config.get("max_retries", ReviewEngine.DEFAULT_MAX_RETRIES)
+        self.timeout_s = timeout_s if timeout_s is not None else perf_config.get("timeout", ReviewEngine.DEFAULT_TIMEOUT)
+        self.num_predict = num_predict if num_predict is not None else perf_config.get("num_predict", ReviewEngine.DEFAULT_NUM_PREDICT)
+        self.temperature = temperature if temperature is not None else perf_config.get("temperature", ReviewEngine.DEFAULT_TEMPERATURE)
         self.enable_cache = enable_cache if enable_cache is not None else cache_config.get("enable", True)
         self.strict_validation = strict_validation if strict_validation is not None else demo_config.get("strict_validation", True)
         self.persistent_cache = persistent_cache if persistent_cache is not None else cache_config.get("persistent", True)
         self.cache_dir = cache_dir or cache_config.get("cache_dir", ".cache")
         self.cache_ttl_hours = cache_ttl_hours if cache_ttl_hours is not None else cache_config.get("ttl_hours", 168)
         self.use_compact_prompt = use_compact_prompt if use_compact_prompt is not None else demo_config.get("use_compact_prompt", False)
-        self.model_name = model_name
-        self.ollama_url = ollama_url
-        self.max_concurrent = max_concurrent
-        self.max_retries = max_retries
-        self.timeout_s = timeout_s
-        self.num_predict = num_predict
-        self.temperature = temperature
-        self.enable_cache = enable_cache
-        self.strict_validation = strict_validation
-        self.use_compact_prompt = use_compact_prompt
+        self.observability = observability
         self.labels = self._load_labels()
 
         # Build set of valid label names for fast lookup (case-insensitive)
@@ -447,6 +439,8 @@ Be precise and concise."""
         cached = self._get_cached_response(prompt_hash)
         if cached is not None:
             logger.debug(f"Cache hit for sample {sample_id}")
+            if self.observability:
+                self.observability.record_cache_operation("get", hit=True, latency_ms=0.0)
             cached_copy = cached.copy()
             cached_copy.update({
                 "sample_id": sample_id,
@@ -458,11 +452,13 @@ Be precise and concise."""
             return cached_copy
 
         self._cache_misses += 1
+        if self.observability:
+            self.observability.record_cache_operation("get", hit=False, latency_ms=0.0)
         start_time = time.time()
 
         # Use semaphore for concurrency control if provided
         async def _do_review():
-            return await self._call_ollama_with_retry(prompt)
+            return await self._call_ollama_with_retry(prompt, sample_id=sample_id)
 
         try:
             if semaphore:
@@ -473,6 +469,10 @@ Be precise and concise."""
 
             latency_ms = int((time.time() - start_time) * 1000)
             logger.debug(f"Sample {sample_id} reviewed in {latency_ms}ms")
+            
+            # Record latency for observability
+            if self.observability:
+                self.observability.record_latency(latency_ms)
 
             # Parse response
             parsed = self._parse_response(response)
@@ -481,6 +481,12 @@ Be precise and concise."""
             validation = self._validate_output(parsed, raw_response=response)
             if not validation.is_valid:
                 logger.debug(f"Validation issues for {sample_id}: {validation.issues}")
+                if self.observability:
+                    self.observability.record_error(
+                        "validation",
+                        f"Validation issues: {', '.join(validation.issues)}",
+                        sample_id=sample_id
+                    )
 
             # Build result with sanitized/validated values
             result = {
@@ -519,6 +525,9 @@ Be precise and concise."""
 
         except Exception as e:
             logger.error(f"Failed to review sample {sample_id}: {e}")
+            if self.observability:
+                error_type = type(e).__name__
+                self.observability.record_error(error_type, str(e), sample_id=sample_id)
             return {
                 "sample_id": sample_id,
                 "text": text,
@@ -534,7 +543,7 @@ Be precise and concise."""
                 "_untrusted": True,
             }
 
-    async def _call_ollama_with_retry(self, prompt: str) -> str:
+    async def _call_ollama_with_retry(self, prompt: str, sample_id: Optional[str] = None) -> str:
         """Call Ollama API with exponential backoff retry."""
         last_exception: Optional[Exception] = None
 
@@ -544,9 +553,13 @@ Be precise and concise."""
             except asyncio.TimeoutError as e:
                 last_exception = e
                 logger.warning(f"Timeout on attempt {attempt + 1}/{self.max_retries}")
+                if self.observability and attempt > 0:
+                    self.observability.record_retry(sample_id or "unknown", attempt, "timeout")
             except aiohttp.ClientError as e:
                 last_exception = e
                 logger.warning(f"Network error on attempt {attempt + 1}/{self.max_retries}: {e}")
+                if self.observability and attempt > 0:
+                    self.observability.record_retry(sample_id or "unknown", attempt, "network")
             except OllamaHTTPError as e:
                 last_exception = e
                 # Retry on overload/transient failures; do not retry on client errors.
@@ -554,6 +567,8 @@ Be precise and concise."""
                     logger.warning(
                         f"Server error on attempt {attempt + 1}/{self.max_retries}: {e} (status={e.status})"
                     )
+                    if self.observability and attempt > 0:
+                        self.observability.record_retry(sample_id or "unknown", attempt, f"http_{e.status}")
                 else:
                     raise
             except Exception:
