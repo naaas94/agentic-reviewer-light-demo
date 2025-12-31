@@ -38,7 +38,19 @@ from core.synthetic_generator import SyntheticGenerator
 # DEMO PRESETS
 # ============================================================================
 
-# DemoPresets removed - now loaded from config.yaml
+# DemoPresets - loaded from config.yaml for backward compatibility
+class DemoPresets:
+    """Demo preset configurations loaded from config.yaml."""
+    DEMO_FAST: Dict[str, Any]
+    BENCHMARK: Dict[str, Any]
+
+# Initialize presets as class attributes (computed once at module load)
+_config = get_config()
+DemoPresets.DEMO_FAST = _config.get_preset("demo_fast")
+DemoPresets.BENCHMARK = _config.get_preset("benchmark")
+
+# MODEL_PREFERENCES - loaded from config.yaml for backward compatibility
+MODEL_PREFERENCES = _config.get_model_preferences()
 
 
 # ============================================================================
@@ -54,7 +66,7 @@ def detect_gpu_info() -> Dict[str, Any]:
         - gpu_vram_gb: float - VRAM in GB if detectable
         - gpu_type: str - "nvidia", "amd", "apple", or "none"
     """
-    gpu_info = {
+    gpu_info: Dict[str, Any] = {
         "has_gpu": False,
         "gpu_name": None,
         "gpu_vram_gb": None,
@@ -471,7 +483,7 @@ def pull_model(model: Optional[str] = None, url: Optional[str] = None) -> bool:
     """Pull a model from Ollama (with progress indication)."""
     import json
     import urllib.request
-    
+
     # Use config defaults if not provided
     if model is None:
         config = get_config()
@@ -840,15 +852,15 @@ Presets:
 
     # Load config for defaults
     config = get_config()
-    
+
     # Core options
-    parser.add_argument("--samples", "-n", type=int, default=None, 
+    parser.add_argument("--samples", "-n", type=int, default=None,
                        help=f"Number of samples (default: {config.get('demo.default_samples', 12)})")
     parser.add_argument("--seed", "-s", type=int, default=None, help="Random seed for reproducibility")
     parser.add_argument("--mock", action="store_true", help="Use mock results (skip LLM)")
-    parser.add_argument("--model", type=str, default=None, 
+    parser.add_argument("--model", type=str, default=None,
                        help=f"Ollama model (default: {config.get_model_default()})")
-    parser.add_argument("--ollama-url", type=str, default=None, 
+    parser.add_argument("--ollama-url", type=str, default=None,
                        help=f"Ollama base URL (default: {config.get_ollama_url()})")
 
     # Performance tuning
@@ -908,17 +920,17 @@ Presets:
         preset = {}
 
     # Resolve final values: explicit arg > preset > config > hardcoded default
-    n_samples = (args.samples if args.samples is not None 
+    n_samples = (args.samples if args.samples is not None
                  else preset.get("samples", demo_config.get("default_samples", 12)))
-    max_concurrent = (args.max_concurrent if args.max_concurrent is not None 
+    max_concurrent = (args.max_concurrent if args.max_concurrent is not None
                      else preset.get("max_concurrent", perf_config.get("max_concurrent", 1)))
-    max_retries = (args.max_retries if args.max_retries is not None 
+    max_retries = (args.max_retries if args.max_retries is not None
                    else perf_config.get("max_retries", 3))
-    timeout_s = (args.timeout if args.timeout is not None 
+    timeout_s = (args.timeout if args.timeout is not None
                  else preset.get("timeout", perf_config.get("timeout", 180)))
-    num_predict = (args.num_predict if args.num_predict is not None 
+    num_predict = (args.num_predict if args.num_predict is not None
                    else preset.get("num_predict", perf_config.get("num_predict", 200)))
-    temperature = (args.temperature if args.temperature is not None 
+    temperature = (args.temperature if args.temperature is not None
                   else preset.get("temperature", perf_config.get("temperature", 0.1)))
 
     # Model and URL from config if not provided
@@ -926,8 +938,8 @@ Presets:
     ollama_url_default = args.ollama_url if args.ollama_url is not None else config.get_ollama_url()
 
     seed = args.seed or int(datetime.now().timestamp())
-    warmup = args.no_warmup == False and demo_config.get("warmup", True)
-    persistent_cache = args.no_persistent_cache == False and cache_config.get("persistent", True)
+    warmup = not args.no_warmup and demo_config.get("warmup", True)
+    persistent_cache = not args.no_persistent_cache and cache_config.get("persistent", True)
     cache_dir = args.cache_dir if args.cache_dir is not None else cache_config.get("cache_dir", ".cache")
     use_compact_prompt = args.compact_prompts or demo_config.get("use_compact_prompt", False)
 

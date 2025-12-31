@@ -1,6 +1,5 @@
 """Configuration loader for unified settings management."""
 
-import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -16,16 +15,18 @@ class ConfigLoader:
 
     def __init__(self, config_path: Optional[str] = None):
         """Initialize config loader.
-        
+
         Args:
             config_path: Path to config YAML file. If None, uses default location.
         """
         if config_path is None:
             # Default: configs/config.yaml relative to project root
             project_root = Path(__file__).parent.parent
-            config_path = project_root / "configs" / "config.yaml"
-        
-        self.config_path = Path(config_path)
+            config_path_obj = project_root / "configs" / "config.yaml"
+        else:
+            config_path_obj = Path(config_path)
+
+        self.config_path = config_path_obj
         self._config: Optional[Dict[str, Any]] = None
         self._load_config()
 
@@ -95,11 +96,11 @@ class ConfigLoader:
 
     def get(self, key_path: str, default: Any = None) -> Any:
         """Get config value by dot-separated path.
-        
+
         Args:
             key_path: Dot-separated path (e.g., "model.default", "performance.timeout")
             default: Default value if key not found
-            
+
         Returns:
             Config value or default
         """
@@ -108,26 +109,26 @@ class ConfigLoader:
 
         keys = key_path.split(".")
         value = self._config
-        
+
         for key in keys:
             if isinstance(value, dict) and key in value:
                 value = value[key]
             else:
                 return default
-        
+
         return value
 
     def get_model_default(self) -> str:
         """Get default model name."""
-        return self.get("model.default", "mistral")
+        return str(self.get("model.default", "mistral"))
 
     def get_ollama_url(self) -> str:
         """Get Ollama URL."""
-        return self.get("model.ollama_url", "http://localhost:11434")
+        return str(self.get("model.ollama_url", "http://localhost:11434"))
 
     def get_model_preferences(self) -> List[Tuple[str, int, str]]:
         """Get model preferences list.
-        
+
         Returns:
             List of (keyword, priority, description) tuples
         """
@@ -137,26 +138,30 @@ class ConfigLoader:
 
     def get_performance_config(self) -> Dict[str, Any]:
         """Get all performance settings."""
-        return self.get("performance", {})
+        result = self.get("performance", {})
+        return result if isinstance(result, dict) else {}
 
     def get_cache_config(self) -> Dict[str, Any]:
         """Get all cache settings."""
-        return self.get("cache", {})
+        result = self.get("cache", {})
+        return result if isinstance(result, dict) else {}
 
     def get_demo_config(self) -> Dict[str, Any]:
         """Get all demo settings."""
-        return self.get("demo", {})
+        result = self.get("demo", {})
+        return result if isinstance(result, dict) else {}
 
     def get_preset(self, preset_name: str) -> Dict[str, Any]:
         """Get preset configuration.
-        
+
         Args:
             preset_name: Name of preset (e.g., "demo_fast", "benchmark")
-            
+
         Returns:
             Preset configuration dict
         """
-        return self.get(f"presets.{preset_name}", {})
+        result = self.get(f"presets.{preset_name}", {})
+        return result if isinstance(result, dict) else {}
 
 
 # Global config instance (lazy-loaded)
@@ -165,10 +170,10 @@ _config_instance: Optional[ConfigLoader] = None
 
 def get_config(config_path: Optional[str] = None) -> ConfigLoader:
     """Get global config instance (singleton pattern).
-    
+
     Args:
         config_path: Optional path to config file (only used on first call)
-        
+
     Returns:
         ConfigLoader instance
     """

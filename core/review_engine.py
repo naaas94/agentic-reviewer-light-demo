@@ -163,31 +163,21 @@ class ReviewEngine:
         perf_config = config.get_performance_config()
         cache_config = config.get_cache_config()
         demo_config = config.get_demo_config()
-        
+
         # Use provided values or fall back to config, then hardcoded defaults
         self.model_name = model_name or config.get_model_default()
         self.ollama_url = ollama_url or config.get_ollama_url()
-        self.max_concurrent = max_concurrent or perf_config.get("max_concurrent", DEFAULT_MAX_CONCURRENT)
-        self.max_retries = max_retries or perf_config.get("max_retries", DEFAULT_MAX_RETRIES)
-        self.timeout_s = timeout_s or perf_config.get("timeout", DEFAULT_TIMEOUT)
-        self.num_predict = num_predict or perf_config.get("num_predict", DEFAULT_NUM_PREDICT)
-        self.temperature = temperature if temperature is not None else perf_config.get("temperature", DEFAULT_TEMPERATURE)
+        self.max_concurrent = max_concurrent or perf_config.get("max_concurrent", ReviewEngine.DEFAULT_MAX_CONCURRENT)
+        self.max_retries = max_retries or perf_config.get("max_retries", ReviewEngine.DEFAULT_MAX_RETRIES)
+        self.timeout_s = timeout_s or perf_config.get("timeout", ReviewEngine.DEFAULT_TIMEOUT)
+        self.num_predict = num_predict or perf_config.get("num_predict", ReviewEngine.DEFAULT_NUM_PREDICT)
+        self.temperature = temperature if temperature is not None else perf_config.get("temperature", ReviewEngine.DEFAULT_TEMPERATURE)
         self.enable_cache = enable_cache if enable_cache is not None else cache_config.get("enable", True)
         self.strict_validation = strict_validation if strict_validation is not None else demo_config.get("strict_validation", True)
         self.persistent_cache = persistent_cache if persistent_cache is not None else cache_config.get("persistent", True)
         self.cache_dir = cache_dir or cache_config.get("cache_dir", ".cache")
         self.cache_ttl_hours = cache_ttl_hours if cache_ttl_hours is not None else cache_config.get("ttl_hours", 168)
         self.use_compact_prompt = use_compact_prompt if use_compact_prompt is not None else demo_config.get("use_compact_prompt", False)
-        self.model_name = model_name
-        self.ollama_url = ollama_url
-        self.max_concurrent = max_concurrent
-        self.max_retries = max_retries
-        self.timeout_s = timeout_s
-        self.num_predict = num_predict
-        self.temperature = temperature
-        self.enable_cache = enable_cache
-        self.strict_validation = strict_validation
-        self.use_compact_prompt = use_compact_prompt
         self.labels = self._load_labels()
 
         # Build set of valid label names for fast lookup (case-insensitive)

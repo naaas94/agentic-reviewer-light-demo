@@ -272,9 +272,12 @@ class TestConfiguration:
 
     def test_default_configuration(self):
         """Should have sensible defaults."""
-        engine = ReviewEngine()
+        from core.config_loader import get_config
 
-        assert engine.model_name == "mistral"
+        engine = ReviewEngine()
+        config = get_config()
+
+        assert engine.model_name == config.get_model_default()
         assert engine.ollama_url == "http://localhost:11434"
         assert engine.max_concurrent == 1
         assert engine.max_retries == 3
