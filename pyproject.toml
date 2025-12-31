@@ -1,10 +1,14 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "agentic-reviewer-demo"
 version = "1.0.0"
 description = "LLM-powered semantic auditing demo"
 readme = "README.md"
 requires-python = ">=3.9"
-license = {text = "MIT"}
+license = "MIT"
 dependencies = [
     "pandas>=2.0.0",
     "pyyaml>=6.0",
@@ -42,6 +46,12 @@ exclude = [
 [tool.ruff.lint]
 select = ["E", "F", "W", "I"]
 ignore = ["E501"]  # Line too long
+
+[tool.setuptools]
+packages = ["core"]
+
+[tool.setuptools.package-data]
+"*" = ["*.yaml", "*.yml"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

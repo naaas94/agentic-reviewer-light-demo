@@ -28,6 +28,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
 
+from core.config_loader import get_config
 from core.logging_config import get_logger, setup_logging
 from core.report_generator import ReportGenerator
 from core.review_engine import ReviewEngine
@@ -37,26 +38,7 @@ from core.synthetic_generator import SyntheticGenerator
 # DEMO PRESETS
 # ============================================================================
 
-class DemoPresets:
-    """Predefined configurations for common use cases."""
-
-    # Demo-fast: Optimized for reliable, quick demos on sales laptops
-    DEMO_FAST = {
-        "max_concurrent": 1,      # Single request - most reliable
-        "num_predict": 150,       # Shorter responses, faster
-        "timeout": 120,           # Reasonable timeout
-        "samples": 8,             # Fewer samples for speed
-        "temperature": 0.1,       # Low temperature for consistency
-    }
-
-    # Benchmark: For reproducible performance testing
-    BENCHMARK = {
-        "max_concurrent": 1,
-        "num_predict": 200,
-        "timeout": 180,
-        "samples": 12,
-        "temperature": 0.0,       # Deterministic
-    }
+# DemoPresets removed - now loaded from config.yaml
 
 
 # ============================================================================
@@ -358,27 +340,11 @@ def list_ollama_models(url: str = "http://localhost:11434") -> List[str]:
         return []
 
 
-# Model preferences for automatic selection (ordered by suitability for this task)
-# Each entry: (keyword, priority, notes)
-MODEL_PREFERENCES = [
-    # Instruction-tuned models excel at structured output tasks
-    ("mistral", 1, "Fast, good instruction following"),
-    ("llama3.2", 2, "Latest Llama, excellent quality"),
-    ("llama3.1", 2, "High quality, good for structured tasks"),
-    ("llama3", 3, "Good balance of speed and quality"),
-    ("gemma2", 3, "Google's efficient model"),
-    ("gemma", 4, "Lightweight, fast"),
-    ("phi3", 4, "Microsoft's small but capable model"),
-    ("phi", 5, "Very fast, good for demos"),
-    ("qwen2.5", 3, "Alibaba's latest, multilingual"),
-    ("qwen2", 4, "Good general purpose"),
-    ("qwen", 5, "Multilingual capable"),
-    ("llama2", 6, "Older but reliable"),
-    ("neural", 6, "Community model"),
-    ("codellama", 7, "Code-focused, less ideal for classification"),
-    ("deepseek", 5, "Good reasoning capabilities"),
-    ("yi", 5, "Chinese/English bilingual"),
-]
+# MODEL_PREFERENCES removed - now loaded from config.yaml
+def get_model_preferences():
+    """Get model preferences from config."""
+    config = get_config()
+    return config.get_model_preferences()
 
 
 def get_model_info(model_name: str) -> Dict[str, Any]:
@@ -466,10 +432,11 @@ def check_ollama(
         # Priority 3: Score all available models and pick best
         best_model = None
         best_score = float('inf')  # Lower is better
+        model_preferences = get_model_preferences()
 
         for model in models:
             model_lower = model.lower()
-            for keyword, priority, _ in MODEL_PREFERENCES:
+            for keyword, priority, _ in model_preferences:
                 if keyword in model_lower:
                     # Prefer non-code models for classification tasks
                     if "code" in model_lower:
@@ -500,10 +467,18 @@ def check_ollama(
         return False, None, "not_running", []
 
 
-def pull_model(model: str = "mistral", url: str = "http://localhost:11434") -> bool:
+def pull_model(model: Optional[str] = None, url: Optional[str] = None) -> bool:
     """Pull a model from Ollama (with progress indication)."""
     import json
     import urllib.request
+    
+    # Use config defaults if not provided
+    if model is None:
+        config = get_config()
+        model = config.get_model_default()
+    if url is None:
+        config = get_config()
+        url = config.get_ollama_url()
 
     print(f"\n📥 Pulling {model} model (this may take a few minutes)...")
     print("   This is a one-time download.\n")
@@ -863,31 +838,39 @@ Presets:
     preset_group.add_argument("--benchmark", action="store_true",
                               help="Benchmark preset: deterministic, reproducible results")
 
+    # Load config for defaults
+    config = get_config()
+    
     # Core options
-    parser.add_argument("--samples", "-n", type=int, default=None, help="Number of samples (default: 12)")
+    parser.add_argument("--samples", "-n", type=int, default=None, 
+                       help=f"Number of samples (default: {config.get('demo.default_samples', 12)})")
     parser.add_argument("--seed", "-s", type=int, default=None, help="Random seed for reproducibility")
     parser.add_argument("--mock", action="store_true", help="Use mock results (skip LLM)")
-    parser.add_argument("--model", type=str, default="mistral", help="Ollama model (default: mistral)")
-    parser.add_argument("--ollama-url", type=str, default="http://localhost:11434", help="Ollama base URL")
+    parser.add_argument("--model", type=str, default=None, 
+                       help=f"Ollama model (default: {config.get_model_default()})")
+    parser.add_argument("--ollama-url", type=str, default=None, 
+                       help=f"Ollama base URL (default: {config.get_ollama_url()})")
 
     # Performance tuning
+    perf_config = config.get_performance_config()
+    cache_config = config.get_cache_config()
     perf_group = parser.add_argument_group("performance", "Performance tuning options")
     perf_group.add_argument("--max-concurrent", type=int, default=None,
-                            help=f"Max concurrent Ollama requests (default: {ReviewEngine.DEFAULT_MAX_CONCURRENT})")
-    perf_group.add_argument("--max-retries", type=int, default=ReviewEngine.DEFAULT_MAX_RETRIES,
-                            help="Max retries per request")
+                            help=f"Max concurrent Ollama requests (default: {perf_config.get('max_concurrent', 1)})")
+    perf_group.add_argument("--max-retries", type=int, default=None,
+                            help=f"Max retries per request (default: {perf_config.get('max_retries', 3)})")
     perf_group.add_argument("--timeout", type=int, default=None,
-                            help=f"Per-request timeout seconds (default: {ReviewEngine.DEFAULT_TIMEOUT})")
+                            help=f"Per-request timeout seconds (default: {perf_config.get('timeout', 180)})")
     perf_group.add_argument("--num-predict", type=int, default=None,
-                            help=f"Ollama num_predict tokens (default: {ReviewEngine.DEFAULT_NUM_PREDICT})")
+                            help=f"Ollama num_predict tokens (default: {perf_config.get('num_predict', 200)})")
     perf_group.add_argument("--temperature", type=float, default=None,
-                            help=f"Ollama temperature (default: {ReviewEngine.DEFAULT_TEMPERATURE})")
+                            help=f"Ollama temperature (default: {perf_config.get('temperature', 0.1)})")
     perf_group.add_argument("--auto-tune", action="store_true",
                             help="Auto-tune concurrency based on system resources")
     perf_group.add_argument("--compact-prompts", action="store_true",
                             help="Use compact prompt template to reduce latency")
-    perf_group.add_argument("--cache-dir", type=str, default=".cache",
-                            help="Directory for persistent prompt cache (default: .cache)")
+    perf_group.add_argument("--cache-dir", type=str, default=None,
+                            help=f"Directory for persistent prompt cache (default: {cache_config.get('cache_dir', '.cache')})")
 
     # Security options
     security_group = parser.add_argument_group("security", "Security and privacy options")
@@ -910,26 +893,43 @@ Presets:
 
     args = parser.parse_args()
 
+    # Load config (reload in case it changed)
+    config = get_config()
+    perf_config = config.get_performance_config()
+    cache_config = config.get_cache_config()
+    demo_config = config.get_demo_config()
+
     # Apply presets (presets set defaults, explicit args override)
     if args.demo_fast:
-        preset = DemoPresets.DEMO_FAST
+        preset = config.get_preset("demo_fast")
     elif args.benchmark:
-        preset = DemoPresets.BENCHMARK
+        preset = config.get_preset("benchmark")
     else:
         preset = {}
 
-    # Resolve final values: explicit arg > preset > system default
-    n_samples = args.samples if args.samples is not None else preset.get("samples", 12)
-    max_concurrent = args.max_concurrent if args.max_concurrent is not None else preset.get("max_concurrent", ReviewEngine.DEFAULT_MAX_CONCURRENT)
-    timeout_s = args.timeout if args.timeout is not None else preset.get("timeout", ReviewEngine.DEFAULT_TIMEOUT)
-    num_predict = args.num_predict if args.num_predict is not None else preset.get("num_predict", ReviewEngine.DEFAULT_NUM_PREDICT)
-    temperature = args.temperature if args.temperature is not None else preset.get("temperature", ReviewEngine.DEFAULT_TEMPERATURE)
+    # Resolve final values: explicit arg > preset > config > hardcoded default
+    n_samples = (args.samples if args.samples is not None 
+                 else preset.get("samples", demo_config.get("default_samples", 12)))
+    max_concurrent = (args.max_concurrent if args.max_concurrent is not None 
+                     else preset.get("max_concurrent", perf_config.get("max_concurrent", 1)))
+    max_retries = (args.max_retries if args.max_retries is not None 
+                   else perf_config.get("max_retries", 3))
+    timeout_s = (args.timeout if args.timeout is not None 
+                 else preset.get("timeout", perf_config.get("timeout", 180)))
+    num_predict = (args.num_predict if args.num_predict is not None 
+                   else preset.get("num_predict", perf_config.get("num_predict", 200)))
+    temperature = (args.temperature if args.temperature is not None 
+                  else preset.get("temperature", perf_config.get("temperature", 0.1)))
+
+    # Model and URL from config if not provided
+    model_default = args.model if args.model is not None else config.get_model_default()
+    ollama_url_default = args.ollama_url if args.ollama_url is not None else config.get_ollama_url()
 
     seed = args.seed or int(datetime.now().timestamp())
-    warmup = not args.no_warmup
-    persistent_cache = not args.no_persistent_cache
-    cache_dir = args.cache_dir
-    use_compact_prompt = args.compact_prompts
+    warmup = args.no_warmup == False and demo_config.get("warmup", True)
+    persistent_cache = args.no_persistent_cache == False and cache_config.get("persistent", True)
+    cache_dir = args.cache_dir if args.cache_dir is not None else cache_config.get("cache_dir", ".cache")
+    use_compact_prompt = args.compact_prompts or demo_config.get("use_compact_prompt", False)
 
     # Setup logging based on verbosity
     setup_logging(verbose=args.verbose)
@@ -965,14 +965,14 @@ Presets:
             module_logger.debug(f"Auto-tune: keeping concurrency at {max_concurrent} ({reason})")
 
     use_llm = True
-    model_to_use = args.model
+    model_to_use = model_default
 
     if args.mock:
         print("✓ Mock mode (skipping LLM)")
         use_llm = False
     else:
         # Check Ollama status with improved model selection
-        ollama_running, available_model, status, all_models = check_ollama(args.ollama_url, preferred_model=args.model)
+        ollama_running, available_model, status, all_models = check_ollama(ollama_url_default, preferred_model=model_default)
         module_logger.debug(f"Ollama status: running={ollama_running}, model={available_model}, status={status}, available={all_models}")
 
         if status == "not_running":
@@ -995,8 +995,9 @@ Presets:
 
             # Check Ollama configuration
             config = get_ollama_config()
-            if config["OLLAMA_MODELS"]:
-                module_logger.debug(f"OLLAMA_MODELS set to: {config['OLLAMA_MODELS']}")
+            ollama_env_config = get_ollama_config()
+            if ollama_env_config["OLLAMA_MODELS"]:
+                module_logger.debug(f"OLLAMA_MODELS set to: {ollama_env_config['OLLAMA_MODELS']}")
 
             # Check what models are actually available
             available_models = list_ollama_models()
@@ -1004,23 +1005,23 @@ Presets:
                 print(f"⚠️  Found {len(available_models)} model(s), but none are compatible:")
                 for model in available_models:
                     print(f"   - {model}")
-                print(f"\nWould you like to download '{args.model}' instead? (free, ~4GB)")
+                print(f"\nWould you like to download '{model_default}' instead? (free, ~4GB)")
             else:
                 print("⚠️  No language models installed")
 
                 # Check if models might be on a different drive
-                if not config["OLLAMA_MODELS"]:
+                if not ollama_env_config["OLLAMA_MODELS"]:
                     print("\nNote: If Ollama models are stored on a different drive (e.g., D:),")
                     print("you may need to set the OLLAMA_MODELS environment variable:")
                     print("  PowerShell: $env:OLLAMA_MODELS = 'D:\\Apps\\Ollama\\models'")
                     print("  Then restart Ollama for the change to take effect.")
                     print()
 
-                print(f"Would you like to download '{args.model}'? (free, ~4GB)")
+                print(f"Would you like to download '{model_default}'? (free, ~4GB)")
 
             print("This is a one-time download.")
             print("\nAlternatively, you can download manually:")
-            print(f"  ollama pull {args.model}")
+            print(f"  ollama pull {model_default}")
             print("\n")
 
             try:
@@ -1030,34 +1031,34 @@ Presets:
                 else:
                     if not sys.stdin.isatty():
                         print("❌ No usable Ollama model found and this session is non-interactive.")
-                        print(f"Run: ollama pull {args.model}")
+                        print(f"Run: ollama pull {model_default}")
                         print("Or rerun this demo with --yes to auto-download.")
                         sys.exit(2)
 
                     response = input("Download now? [Y/n]: ").strip().lower()
 
                 if response in ["", "y", "yes"]:
-                    if pull_model(args.model):
-                        model_to_use = args.model
+                    if pull_model(model_default, ollama_url_default):
+                        model_to_use = model_default
                     else:
                         print("\nFailed to download. You can try manually:")
-                        print(f"  ollama pull {args.model}")
+                        print(f"  ollama pull {model_default}")
                         print("\nOr run with --mock for preview.")
                         sys.exit(1)
                 else:
-                    print(f"\nTo download manually, run: ollama pull {args.model}")
+                    print(f"\nTo download manually, run: ollama pull {model_default}")
                     print("Or run with --mock for a quick preview without LLM.")
                     sys.exit(0)
             except KeyboardInterrupt:
-                print(f"\n\nTo download manually, run: ollama pull {args.model}")
+                print(f"\n\nTo download manually, run: ollama pull {model_default}")
                 print("Or run with --mock for a quick preview.")
                 sys.exit(0)
 
         else:  # status == "ready"
             model_to_use = available_model
             # Show if we fell back to a different model
-            if args.model != model_to_use and not model_to_use.startswith(args.model):
-                print(f"✓ Ollama ready (requested '{args.model}', using '{model_to_use}')")
+            if model_default != model_to_use and not model_to_use.startswith(model_default):
+                print(f"✓ Ollama ready (requested '{model_default}', using '{model_to_use}')")
             else:
                 print(f"✓ Ollama ready with model: {model_to_use}")
 
@@ -1072,18 +1073,18 @@ Presets:
         use_llm=use_llm,
         model=model_to_use,
         max_concurrent=max_concurrent,
-        max_retries=args.max_retries,
+        max_retries=max_retries,
         timeout_s=timeout_s,
         num_predict=num_predict,
         temperature=temperature,
-        ollama_url=args.ollama_url,
-        enable_cache=(not args.no_cache),
+        ollama_url=ollama_url_default,
+        enable_cache=(not args.no_cache) and cache_config.get("enable", True),
         persistent_cache=persistent_cache,
         cache_dir=cache_dir,
         use_compact_prompt=use_compact_prompt,
         warmup=warmup,
         redact=args.redact,
-        strict_validation=(not args.no_strict_validation),
+        strict_validation=(not args.no_strict_validation) and demo_config.get("strict_validation", True),
     )
 
     try:

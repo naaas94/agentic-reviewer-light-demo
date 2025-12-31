@@ -24,6 +24,7 @@ from typing import Any, Callable, Dict, List, Optional, Set
 import aiohttp
 import yaml  # type: ignore
 
+from core.config_loader import get_config
 from core.logging_config import get_logger
 
 logger = get_logger(__name__)
@@ -142,20 +143,41 @@ class ReviewEngine:
 
     def __init__(
         self,
-        model_name: str = "mistral",
-        ollama_url: str = "http://localhost:11434",
-        max_concurrent: int = DEFAULT_MAX_CONCURRENT,
-        max_retries: int = DEFAULT_MAX_RETRIES,
-        timeout_s: int = DEFAULT_TIMEOUT,
-        num_predict: int = DEFAULT_NUM_PREDICT,
-        temperature: float = DEFAULT_TEMPERATURE,
-        enable_cache: bool = True,
-        strict_validation: bool = True,
-        persistent_cache: bool = True,
-        cache_dir: str = ".cache",
-        cache_ttl_hours: int = 168,
-        use_compact_prompt: bool = False,
+        model_name: Optional[str] = None,
+        ollama_url: Optional[str] = None,
+        max_concurrent: Optional[int] = None,
+        max_retries: Optional[int] = None,
+        timeout_s: Optional[int] = None,
+        num_predict: Optional[int] = None,
+        temperature: Optional[float] = None,
+        enable_cache: Optional[bool] = None,
+        strict_validation: Optional[bool] = None,
+        persistent_cache: Optional[bool] = None,
+        cache_dir: Optional[str] = None,
+        cache_ttl_hours: Optional[int] = None,
+        use_compact_prompt: Optional[bool] = None,
     ):
+        """Initialize ReviewEngine with config defaults if parameters not provided."""
+        # Load config for defaults
+        config = get_config()
+        perf_config = config.get_performance_config()
+        cache_config = config.get_cache_config()
+        demo_config = config.get_demo_config()
+        
+        # Use provided values or fall back to config, then hardcoded defaults
+        self.model_name = model_name or config.get_model_default()
+        self.ollama_url = ollama_url or config.get_ollama_url()
+        self.max_concurrent = max_concurrent or perf_config.get("max_concurrent", DEFAULT_MAX_CONCURRENT)
+        self.max_retries = max_retries or perf_config.get("max_retries", DEFAULT_MAX_RETRIES)
+        self.timeout_s = timeout_s or perf_config.get("timeout", DEFAULT_TIMEOUT)
+        self.num_predict = num_predict or perf_config.get("num_predict", DEFAULT_NUM_PREDICT)
+        self.temperature = temperature if temperature is not None else perf_config.get("temperature", DEFAULT_TEMPERATURE)
+        self.enable_cache = enable_cache if enable_cache is not None else cache_config.get("enable", True)
+        self.strict_validation = strict_validation if strict_validation is not None else demo_config.get("strict_validation", True)
+        self.persistent_cache = persistent_cache if persistent_cache is not None else cache_config.get("persistent", True)
+        self.cache_dir = cache_dir or cache_config.get("cache_dir", ".cache")
+        self.cache_ttl_hours = cache_ttl_hours if cache_ttl_hours is not None else cache_config.get("ttl_hours", 168)
+        self.use_compact_prompt = use_compact_prompt if use_compact_prompt is not None else demo_config.get("use_compact_prompt", False)
         self.model_name = model_name
         self.ollama_url = ollama_url
         self.max_concurrent = max_concurrent
@@ -187,10 +209,10 @@ class ReviewEngine:
         self._cache_misses = 0
         self._persistent_hits = 0
         self._persistent_cache: Optional[PersistentCache] = None
-        if self.enable_cache and persistent_cache:
+        if self.enable_cache and self.persistent_cache:
             self._persistent_cache = PersistentCache(
-                cache_dir=cache_dir,
-                ttl_hours=cache_ttl_hours,
+                cache_dir=self.cache_dir,
+                ttl_hours=self.cache_ttl_hours,
             )
 
         # Validation statistics

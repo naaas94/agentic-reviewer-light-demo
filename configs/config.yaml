@@ -1,0 +1,102 @@
+# Agentic Reviewer Demo Configuration
+# ====================================
+# This file contains all default settings for the demo.
+# CLI arguments override these values.
+
+# Model Configuration
+# -------------------
+model:
+  # Default model name (used if --model not specified)
+  default: "qwen2.5:1.5b"
+  
+  # Ollama server URL
+  ollama_url: "http://localhost:11434"
+  
+  # Model preferences for auto-selection (ordered by suitability)
+  # Format: [keyword, priority, description]
+  # Lower priority = better preference
+  preferences:
+    - ["mistral", 1, "Fast, good instruction following"]
+    - ["llama3.2", 2, "Latest Llama, excellent quality"]
+    - ["llama3.1", 2, "High quality, good for structured tasks"]
+    - ["llama3", 3, "Good balance of speed and quality"]
+    - ["gemma2", 3, "Google's efficient model"]
+    - ["gemma", 4, "Lightweight, fast"]
+    - ["phi3", 4, "Microsoft's small but capable model"]
+    - ["phi", 5, "Very fast, good for demos"]
+    - ["qwen2.5", 3, "Alibaba's latest, multilingual"]
+    - ["qwen2", 4, "Good general purpose"]
+    - ["qwen", 5, "Multilingual capable"]
+    - ["llama2", 6, "Older but reliable"]
+    - ["neural", 6, "Community model"]
+    - ["codellama", 7, "Code-focused, less ideal for classification"]
+    - ["deepseek", 5, "Good reasoning capabilities"]
+    - ["yi", 5, "Chinese/English bilingual"]
+
+# Performance Settings
+# --------------------
+performance:
+  # Maximum concurrent Ollama requests
+  max_concurrent: 1
+  
+  # Maximum retries per request
+  max_retries: 3
+  
+  # Request timeout in seconds
+  timeout: 180
+  
+  # Base delay for exponential backoff (seconds)
+  base_delay: 1.0
+  
+  # Maximum tokens to predict
+  num_predict: 200
+  
+  # Temperature for sampling (0.0 = deterministic, higher = more creative)
+  temperature: 0.1
+
+# Cache Configuration
+# ------------------
+cache:
+  # Enable prompt caching
+  enable: true
+  
+  # Use persistent disk cache
+  persistent: true
+  
+  # Cache directory
+  cache_dir: ".cache"
+  
+  # Cache TTL in hours (168 = 7 days)
+  ttl_hours: 168
+
+# Demo Settings
+# ------------
+demo:
+  # Default number of samples
+  default_samples: 12
+  
+  # Enable model warm-up
+  warmup: true
+  
+  # Use compact prompts (faster, less context)
+  use_compact_prompt: false
+  
+  # Strict output validation
+  strict_validation: true
+
+# Presets
+# -------
+presets:
+  demo_fast:
+    max_concurrent: 1
+    num_predict: 150
+    timeout: 120
+    samples: 8
+    temperature: 0.1
+  
+  benchmark:
+    max_concurrent: 1
+    num_predict: 200
+    timeout: 180
+    samples: 12
+    temperature: 0.0
